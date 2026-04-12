@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from project0.errors import RoutingError
 from project0.orchestrator import Orchestrator
 from project0.store import Store
 from project0.telegram_io import FakeBotSender, InboundUpdate
@@ -108,3 +109,73 @@ async def test_allowlist_rejects_unknown_user(
     orch, sender = orchestrator
     await orch.handle(_update(user_id=999, text="hi"))
     assert sender.sent == []
+
+
+# --- Delegation tests ---
+
+
+@pytest.mark.asyncio
+async def test_manager_delegation_produces_four_envelopes(
+    orchestrator: tuple[Orchestrator, FakeBotSender], store: Store
+) -> None:
+    orch, sender = orchestrator
+    await orch.handle(_update(msg_id=10, text="any news today?"))
+
+    # Two outbound sends: (a) Manager's visible handoff, (b) Intelligence's reply.
+    agents_sent_by = [s["agent"] for s in sender.sent]
+    assert agents_sent_by == ["manager", "intelligence"]
+    assert "@intelligence" in sender.sent[0]["text"]  # type: ignore[operator]
+    assert "[intelligence-stub]" in sender.sent[1]["text"]  # type: ignore[operator]
+
+    # Four rows in messages: user → manager, manager → user (handoff),
+    # manager → intelligence (internal), intelligence → user (reply).
+    rows = store.conn.execute("SELECT * FROM messages ORDER BY id ASC").fetchall()
+    assert len(rows) == 4
+
+    user_row, handoff_row, internal_row, intel_reply_row = rows
+
+    assert user_row["from_kind"] == "user"
+    assert user_row["to_agent"] == "manager"
+
+    assert handoff_row["from_agent"] == "manager"
+    assert handoff_row["to_agent"] == "user"
+    assert handoff_row["parent_id"] == user_row["id"]
+
+    assert internal_row["from_agent"] == "manager"
+    assert internal_row["to_agent"] == "intelligence"
+    assert internal_row["parent_id"] == user_row["id"]
+    assert internal_row["source"] == "internal"
+
+    assert intel_reply_row["from_agent"] == "intelligence"
+    assert intel_reply_row["to_agent"] == "user"
+    assert intel_reply_row["parent_id"] == internal_row["id"]
+
+    # Focus is now intelligence.
+    assert store.chat_focus().get(-100) == "intelligence"
+
+
+@pytest.mark.asyncio
+async def test_non_manager_delegation_raises_routing_error(
+    orchestrator: tuple[Orchestrator, FakeBotSender], store: Store
+) -> None:
+    """Delegation authority belongs exclusively to Manager. If Intelligence
+    ever returned a delegation, the orchestrator must refuse it."""
+    from project0.agents import registry as reg
+    from project0.envelope import AgentResult
+    from project0.envelope import Envelope as E
+
+    async def rogue_intelligence(env: E) -> AgentResult:
+        return AgentResult(
+            reply_text=None,
+            delegate_to="manager",
+            handoff_text="→ bouncing back",
+        )
+
+    original = reg.AGENT_REGISTRY["intelligence"]
+    reg.AGENT_REGISTRY["intelligence"] = rogue_intelligence
+    try:
+        orch, _sender = orchestrator
+        with pytest.raises(RoutingError, match="only Manager may delegate"):
+            await orch.handle(_update(msg_id=11, text="@intelligence ping"))
+    finally:
+        reg.AGENT_REGISTRY["intelligence"] = original

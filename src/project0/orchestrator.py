@@ -82,9 +82,67 @@ class Orchestrator:
                 )
                 return
 
-            # Delegation path implemented in Task 10.
+            # Delegation authority: only Manager may delegate.
+            if persisted.to_agent != "manager":
+                raise RoutingError(
+                    f"only Manager may delegate; "
+                    f"{persisted.to_agent} returned delegate_to={result.delegate_to}"
+                )
+
+            assert result.delegate_to is not None
+            assert result.handoff_text is not None
+            target = result.delegate_to
+            if target not in AGENT_REGISTRY:
+                raise RoutingError(f"unknown delegation target: {target!r}")
+
+            # (a) Visible handoff message — persisted as outbound_reply child
+            #     of the original user envelope, then dispatched via Manager's bot.
+            await self._emit_reply(
+                parent=persisted,
+                speaker="manager",
+                text=result.handoff_text,
+            )
+
+            # (b) Internal forward envelope — child of the original user envelope.
+            internal = Envelope(
+                id=None,
+                ts=_utc_now_iso(),
+                parent_id=persisted.id,
+                source="internal",
+                telegram_chat_id=persisted.telegram_chat_id,
+                telegram_msg_id=None,
+                received_by_bot=None,
+                from_kind="agent",
+                from_agent="manager",
+                to_agent=target,
+                body=persisted.body,
+                mentions=[],
+                routing_reason="manager_delegation",
+            )
+            persisted_internal = self.store.messages().insert(internal)
+            assert persisted_internal is not None
+
+            # (c) Focus switches to the delegation target.
+            assert persisted.telegram_chat_id is not None
+            self.store.chat_focus().set(
+                persisted.telegram_chat_id, target
+            )
+
+        # (d) Dispatch the target agent outside the lock.
+        target_fn = AGENT_REGISTRY[target]
+        target_result = await target_fn(persisted_internal)
+
+        # Delegated agents are forbidden to delegate further (authority rule).
+        if not target_result.is_reply():
             raise RoutingError(
-                "delegation path not implemented yet (covered in Task 10)"
+                f"delegated agent {target!r} tried to return non-reply result"
+            )
+
+        async with self.store.lock:
+            await self._emit_reply(
+                parent=persisted_internal,
+                speaker=target,
+                text=target_result.reply_text or "",
             )
 
     # --- helpers -------------------------------------------------------------
