@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from project0.envelope import Envelope
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -106,6 +108,12 @@ class Store:
     def blackboard(self) -> Blackboard:
         return Blackboard(self._conn)
 
+    def messages(self) -> MessagesStore:
+        return MessagesStore(self._conn)
+
+    def chat_focus(self) -> ChatFocusStore:
+        return ChatFocusStore(self._conn)
+
 
 class AgentMemory:
     """Per-agent private memory. Scoped to one agent at construction; there
@@ -189,3 +197,81 @@ class Blackboard:
             }
             for r in rows
         ]
+
+
+class MessagesStore:
+    """Append-only envelope log with SQL-level dedup on Telegram msg ids.
+
+    First-writer-wins: when multiple bots poll the same group, each sees
+    the same Telegram update and tries to insert. The UNIQUE constraint
+    rejects the loser, which `insert()` reports as None.
+    """
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def insert(self, env: Envelope) -> Envelope | None:
+        try:
+            cur = self._conn.execute(
+                """
+                INSERT INTO messages (
+                    ts, source, telegram_chat_id, telegram_msg_id,
+                    from_kind, from_agent, to_agent, envelope_json, parent_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    env.ts,
+                    env.source,
+                    env.telegram_chat_id,
+                    env.telegram_msg_id,
+                    env.from_kind,
+                    env.from_agent,
+                    env.to_agent,
+                    env.to_json(),
+                    env.parent_id,
+                ),
+            )
+        except sqlite3.IntegrityError:
+            return None
+
+        assert cur.lastrowid is not None
+        stored = Envelope.from_json(env.to_json())
+        stored.id = cur.lastrowid
+        return stored
+
+    def fetch_children(self, parent_id: int) -> list[Envelope]:
+        rows = self._conn.execute(
+            "SELECT id, envelope_json FROM messages WHERE parent_id = ? ORDER BY id ASC",
+            (parent_id,),
+        ).fetchall()
+        result = []
+        for r in rows:
+            env = Envelope.from_json(r["envelope_json"])
+            env.id = r["id"]
+            result.append(env)
+        return result
+
+
+class ChatFocusStore:
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def get(self, chat_id: int) -> str | None:
+        row = self._conn.execute(
+            "SELECT current_agent FROM chat_focus WHERE telegram_chat_id = ?",
+            (chat_id,),
+        ).fetchone()
+        return None if row is None else row["current_agent"]
+
+    def set(self, chat_id: int, agent: str) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO chat_focus (telegram_chat_id, current_agent, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT (telegram_chat_id)
+            DO UPDATE SET current_agent = excluded.current_agent,
+                          updated_at    = excluded.updated_at
+            """,
+            (chat_id, agent, _utc_now_iso()),
+        )

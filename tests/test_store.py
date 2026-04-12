@@ -82,3 +82,108 @@ def test_blackboard_recent_filters_by_kind(store: Store) -> None:
     rows = bb.recent(kind="task_summary")
     assert len(rows) == 1
     assert rows[0]["kind"] == "task_summary"
+
+
+# --- MessagesStore tests ---
+
+import pytest
+from project0.envelope import Envelope
+
+
+def _user_env(chat_id: int, msg_id: int, body: str) -> Envelope:
+    return Envelope(
+        id=None,
+        ts="2026-04-13T12:00:00Z",
+        parent_id=None,
+        source="telegram_group",
+        telegram_chat_id=chat_id,
+        telegram_msg_id=msg_id,
+        received_by_bot="manager",
+        from_kind="user",
+        from_agent=None,
+        to_agent="manager",
+        body=body,
+        mentions=[],
+        routing_reason="default_manager",
+    )
+
+
+def test_messages_insert_assigns_id(store: Store) -> None:
+    msgs = store.messages()
+    env = _user_env(-100, 1, "hi")
+    inserted = msgs.insert(env)
+    assert inserted.id is not None
+    assert inserted.id >= 1
+
+
+def test_messages_dedup_by_telegram_ids(store: Store) -> None:
+    msgs = store.messages()
+    env1 = _user_env(-100, 1, "hi")
+    env2 = _user_env(-100, 1, "hi")  # same (source, chat_id, msg_id)
+    first = msgs.insert(env1)
+    second = msgs.insert(env2)
+    assert first.id is not None
+    assert second is None  # dedup signaled by None return
+
+
+def test_messages_internal_source_not_deduped(store: Store) -> None:
+    """Internal envelopes have no telegram ids; each insert must succeed."""
+    msgs = store.messages()
+    env1 = _user_env(-100, 1, "hi")
+    msgs.insert(env1)
+    internal = Envelope(
+        id=None,
+        ts="2026-04-13T12:00:01Z",
+        parent_id=1,
+        source="internal",
+        telegram_chat_id=None,
+        telegram_msg_id=None,
+        received_by_bot=None,
+        from_kind="agent",
+        from_agent="manager",
+        to_agent="intelligence",
+        body="hi",
+        mentions=[],
+        routing_reason="manager_delegation",
+    )
+    a = msgs.insert(internal)
+    b = msgs.insert(internal)
+    assert a is not None and b is not None
+    assert a.id != b.id
+
+
+def test_messages_fetch_children(store: Store) -> None:
+    msgs = store.messages()
+    parent = msgs.insert(_user_env(-100, 1, "any news today?"))
+    assert parent is not None and parent.id is not None
+
+    for to, reason in [("user", "outbound_reply"), ("intelligence", "manager_delegation")]:
+        child = Envelope(
+            id=None,
+            ts="2026-04-13T12:00:01Z",
+            parent_id=parent.id,
+            source="internal",
+            telegram_chat_id=None,
+            telegram_msg_id=None,
+            received_by_bot=None,
+            from_kind="agent",
+            from_agent="manager",
+            to_agent=to,
+            body="...",
+            mentions=[],
+            routing_reason=reason,  # type: ignore[arg-type]
+        )
+        msgs.insert(child)
+
+    children = msgs.fetch_children(parent.id)
+    assert len(children) == 2
+    assert {c.to_agent for c in children} == {"user", "intelligence"}
+
+
+def test_messages_chat_focus_default(store: Store) -> None:
+    focus = store.chat_focus()
+    assert focus.get(-100) is None
+    focus.set(-100, "manager")
+    assert focus.get(-100) == "manager"
+    focus.set(-100, "intelligence")
+    assert focus.get(-100) == "intelligence"
