@@ -91,6 +91,10 @@ class Store:
 
     @property
     def conn(self) -> sqlite3.Connection:
+        """Raw connection. Use only for multi-statement transactions that cannot
+        be expressed through the typed sub-APIs. Caller must hold ``self.lock``
+        for any write. Reading across agent_memory rows here bypasses the
+        isolation guarantee enforced by ``AgentMemory``."""
         return self._conn
 
     def init_schema(self) -> None:
