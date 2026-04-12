@@ -68,6 +68,7 @@ def test_agent_result_delegation_requires_handoff_text():
 
 def test_agent_result_validation_rejects_both():
     import pytest
+
     from project0.errors import RoutingError
 
     with pytest.raises(RoutingError):
@@ -76,6 +77,7 @@ def test_agent_result_validation_rejects_both():
 
 def test_agent_result_validation_rejects_neither():
     import pytest
+
     from project0.errors import RoutingError
 
     with pytest.raises(RoutingError):
@@ -84,6 +86,7 @@ def test_agent_result_validation_rejects_neither():
 
 def test_agent_result_validation_rejects_delegation_without_handoff_text():
     import pytest
+
     from project0.errors import RoutingError
 
     with pytest.raises(RoutingError):

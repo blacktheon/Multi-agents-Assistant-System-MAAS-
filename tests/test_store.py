@@ -6,6 +6,7 @@ an AgentMemory scoped to one agent CANNOT read rows written by another.
 
 from __future__ import annotations
 
+from project0.envelope import Envelope
 from project0.store import Store
 
 
@@ -85,9 +86,6 @@ def test_blackboard_recent_filters_by_kind(store: Store) -> None:
 
 
 # --- MessagesStore tests ---
-
-import pytest
-from project0.envelope import Envelope
 
 
 def _user_env(chat_id: int, msg_id: int, body: str) -> Envelope:
