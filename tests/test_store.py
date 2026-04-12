@@ -51,3 +51,34 @@ def test_agent_memory_has_no_cross_agent_api(store: Store) -> None:
     public_methods = [m for m in dir(mem) if not m.startswith("_")]
     # Whitelisted public surface. Anything else on AgentMemory is a red flag.
     assert set(public_methods) == {"get", "set", "delete"}
+
+
+# --- Blackboard tests ---
+
+
+def test_blackboard_append_returns_id(store: Store) -> None:
+    bb = store.blackboard()
+    row_id = bb.append("manager", "task_summary", {"task": "demo"})
+    assert isinstance(row_id, int)
+    assert row_id >= 1
+
+
+def test_blackboard_recent_returns_appended(store: Store) -> None:
+    bb = store.blackboard()
+    bb.append("manager", "task_summary", {"n": 1})
+    bb.append("intelligence", "handoff_note", {"n": 2})
+    rows = bb.recent(limit=10)
+    assert len(rows) == 2
+    # Most recent first.
+    assert rows[0]["payload"]["n"] == 2
+    assert rows[0]["author_agent"] == "intelligence"
+    assert rows[1]["author_agent"] == "manager"
+
+
+def test_blackboard_recent_filters_by_kind(store: Store) -> None:
+    bb = store.blackboard()
+    bb.append("manager", "task_summary", {"n": 1})
+    bb.append("manager", "handoff_note", {"n": 2})
+    rows = bb.recent(kind="task_summary")
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "task_summary"

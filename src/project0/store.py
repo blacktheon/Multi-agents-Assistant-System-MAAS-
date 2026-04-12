@@ -103,6 +103,9 @@ class Store:
     def agent_memory(self, agent_name: str) -> AgentMemory:
         return AgentMemory(self._conn, agent_name)
 
+    def blackboard(self) -> Blackboard:
+        return Blackboard(self._conn)
+
 
 class AgentMemory:
     """Per-agent private memory. Scoped to one agent at construction; there
@@ -140,3 +143,49 @@ class AgentMemory:
             "DELETE FROM agent_memory WHERE agent_name = ? AND key = ?",
             (self._agent_name, key),
         )
+
+
+class Blackboard:
+    """Append-only shared collaboration surface. All agents can read; all
+    agents can append. No update, no delete. The `author_agent` is passed
+    by the orchestrator from the currently-running agent's identity, so
+    agents cannot spoof each other.
+    """
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def append(self, author: str, kind: str, payload: dict[str, Any]) -> int:
+        cur = self._conn.execute(
+            """
+            INSERT INTO blackboard (author_agent, kind, payload_json, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (author, kind, json.dumps(payload), _utc_now_iso()),
+        )
+        assert cur.lastrowid is not None
+        return cur.lastrowid
+
+    def recent(self, limit: int = 50, kind: str | None = None) -> list[dict[str, Any]]:
+        if kind is None:
+            rows = self._conn.execute(
+                "SELECT id, author_agent, kind, payload_json, created_at "
+                "FROM blackboard ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT id, author_agent, kind, payload_json, created_at "
+                "FROM blackboard WHERE kind = ? ORDER BY id DESC LIMIT ?",
+                (kind, limit),
+            ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "author_agent": r["author_agent"],
+                "kind": r["kind"],
+                "payload": json.loads(r["payload_json"]),
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]
