@@ -15,6 +15,7 @@ from googleapiclient.errors import HttpError
 from project0.calendar.errors import GoogleCalendarError
 from project0.calendar.model import (
     CalendarEvent,
+    _require_aware,
     model_to_raw,
     raw_event_to_model,
 )
@@ -230,11 +231,3 @@ class GoogleCalendar:
                 f"get_event({event_id!r}) failed: {e}"
             ) from e
         return raw_event_to_model(raw, self._user_tz)
-
-
-def _require_aware(dt: datetime, field_name: str) -> None:
-    """Reject naive datetimes at the client boundary."""
-    if dt.tzinfo is None:
-        raise ValueError(
-            f"{field_name} must be a timezone-aware datetime; got a naive value"
-        )

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 # needs to start consuming one of these, move it out of this set and into the
 # translator.
 _IGNORABLE_KEYS: frozenset[str] = frozenset({
-    "kind", "etag", "status", "htmlLink", "created", "updated",
+    "kind", "etag", "status", "created", "updated",
     "creator", "organizer", "iCalUID", "sequence", "reminders",
     "eventType", "hangoutLink", "conferenceData", "attachments",
     "attendees", "recurrence", "recurringEventId", "originalStartTime",

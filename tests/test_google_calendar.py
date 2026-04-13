@@ -285,13 +285,6 @@ def test_update_event_partial_only_patches_provided_fields() -> None:
 
     event = asyncio.run(run())
     assert event.summary == "Coffee with prof (edited)"
-    # Defensive: calling model_to_raw with only summary=... must produce
-    # a single-key body. The unit test on model_to_raw already covers
-    # this, but we re-assert it here to lock the client contract.
-    from project0.calendar.model import model_to_raw as _m
-    assert _m(summary="Coffee with prof (edited)") == {
-        "summary": "Coffee with prof (edited)",
-    }
 
 
 def test_delete_event_returns_none_on_success() -> None:
