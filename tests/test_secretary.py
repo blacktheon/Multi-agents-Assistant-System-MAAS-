@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+
+from project0.envelope import Envelope
 
 
 def test_load_persona_splits_on_mode_headers(tmp_path: Path) -> None:
@@ -269,7 +272,6 @@ async def test_secretary_listener_cooldown_opens_after_thresholds(tmp_path: Path
 async def test_secretary_listener_cooldown_t_min_blocks(tmp_path: Path) -> None:
     """Even if msg and char thresholds are crossed, if t_min has not
     elapsed since the last reply, no LLM call."""
-    from datetime import UTC, datetime
     from project0.agents.secretary import Secretary
     from project0.llm.provider import FakeProvider
     from project0.store import Store
@@ -299,8 +301,7 @@ async def test_secretary_listener_cooldown_t_min_blocks(tmp_path: Path) -> None:
     assert len(llm.calls) == 0
 
 
-def _listener_env(chat_id: int, body: str, env_id: int = 10) -> "Envelope":
-    from project0.envelope import Envelope
+def _listener_env(chat_id: int, body: str, env_id: int = 10) -> Envelope:
     return Envelope(
         id=env_id,
         ts="2026-04-13T12:00:00Z",

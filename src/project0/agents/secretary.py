@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import tomllib
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -233,8 +234,6 @@ class Secretary:
     ) -> bool:
         """Update the cooldown counters with the new message and return True
         if all three thresholds have been exceeded. Pure code; no LLM call."""
-        from datetime import UTC, datetime
-
         now = datetime.now(UTC)
         cfg = self._config
 
@@ -251,6 +250,12 @@ class Secretary:
                 last_at = datetime.fromisoformat(last_at_raw.replace("Z", "+00:00"))
                 last_at_elapsed = int((now - last_at).total_seconds())
             except (ValueError, AttributeError):
+                log.warning(
+                    "secretary: corrupt last_reply_at for chat=%s value=%r; "
+                    "treating as forever-ago",
+                    chat_id,
+                    last_at_raw,
+                )
                 last_at_elapsed = cfg.t_min_seconds + 1
 
         msgs = int(self._memory.get(msgs_key) or 0) + 1
