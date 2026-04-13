@@ -753,3 +753,35 @@ async def test_secretary_reminder_path_handles_none_payload_values(tmp_path: Pat
     # Null-handled fields should not emit label lines.
     assert "- 时间:" not in user_content
     assert "- 备注:" not in user_content
+
+
+@pytest.mark.asyncio
+async def test_secretary_cooldown_survives_instance_restart(tmp_path: Path) -> None:
+    """Cooldown counters live in agent_memory, so a fresh Secretary
+    instance constructed against the same store must read them back."""
+    from project0.agents.secretary import Secretary
+    from project0.llm.provider import FakeProvider
+    from project0.store import Store
+
+    store = Store(tmp_path / "t.db")
+    store.init_schema()
+
+    # First instance: reply once to seed a last_reply_at.
+    now_iso = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    mem = store.agent_memory("secretary")
+    mem.set("last_reply_at_222", now_iso)
+    mem.set("msgs_since_reply_222", 0)
+    mem.set("chars_since_reply_222", 0)
+    del mem
+
+    # Second (fresh) instance reading from the same DB.
+    sec = Secretary(
+        llm=FakeProvider(responses=[]),
+        memory=store.agent_memory("secretary"),
+        messages_store=store.messages(),
+        persona=_build_trivial_persona(),
+        config=_build_trivial_config(),  # t_min=60
+    )
+    # A message comes in right after the recorded reply → t_min blocks it.
+    result = await sec.handle(_listener_env(chat_id=222, body="hi"))
+    assert result is None
