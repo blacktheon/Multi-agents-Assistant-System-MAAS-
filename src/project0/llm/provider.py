@@ -8,16 +8,22 @@ providers can simply ignore it.
 
 Implementations:
   - `FakeProvider`: tests. Canned responses or a callable; records every call.
-  - `AnthropicProvider`: added in sub-project 6a Task 5 — wraps
-    `anthropic.AsyncAnthropic`, enables prompt caching on the system prompt
-    block. Not present in this file yet.
+  - `AnthropicProvider`: wraps `anthropic.AsyncAnthropic` and enables prompt
+    caching on the system prompt block (long stable persona) so volatile
+    per-turn content in `messages` reuses the cached prefix.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
+
+from anthropic import AsyncAnthropic
+from anthropic.types import MessageParam, TextBlockParam
+
+log = logging.getLogger(__name__)
 
 
 class LLMProviderError(Exception):
@@ -81,3 +87,48 @@ class FakeProvider:
         out = self.responses[self._idx]
         self._idx += 1
         return out
+
+
+class AnthropicProvider:
+    """Real provider. Prompt caching is enabled on the system prompt — pass
+    the long stable persona prompt in `system` and the volatile per-turn
+    transcript in `messages` to benefit."""
+
+    def __init__(self, *, api_key: str, model: str) -> None:
+        self._client = AsyncAnthropic(api_key=api_key)
+        self._model = model
+
+    async def complete(
+        self,
+        *,
+        system: str,
+        messages: list[Msg],
+        max_tokens: int = 800,
+    ) -> str:
+        sdk_messages: list[MessageParam] = [
+            {"role": m.role, "content": m.content} for m in messages
+        ]
+        system_block: list[TextBlockParam] = [
+            {
+                "type": "text",
+                "text": system,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+        try:
+            resp = await self._client.messages.create(
+                model=self._model,
+                max_tokens=max_tokens,
+                system=system_block,
+                messages=sdk_messages,
+            )
+        except Exception as e:
+            log.exception("anthropic call failed")
+            raise LLMProviderError(f"anthropic error: {e}") from e
+
+        for block in resp.content:
+            if getattr(block, "type", None) == "text" or hasattr(block, "text"):
+                text = getattr(block, "text", None)
+                if text:
+                    return str(text)
+        raise LLMProviderError("anthropic response contained no text block")
