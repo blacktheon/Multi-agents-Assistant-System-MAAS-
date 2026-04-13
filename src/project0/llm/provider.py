@@ -1,10 +1,9 @@
 """Thin LLM provider interface.
 
-Only one method: `complete`. No streaming (Telegram does not natively stream),
-no tool use (Secretary does not need it; sub-project 6b will add a sibling
-method when Manager needs it). Prompt caching is an implementation detail of
-`AnthropicProvider` — it does not leak into the interface, so local-model
-providers can simply ignore it.
+Two methods: `complete` (plain text) and `complete_with_tools` (tool-use).
+No streaming (Telegram does not natively stream). Prompt caching is an
+implementation detail of `AnthropicProvider` — it does not leak into the
+interface, so local-model providers can simply ignore it.
 
 Implementations:
   - `FakeProvider`: tests. Canned responses or a callable; records every call.
@@ -22,6 +21,8 @@ from typing import Literal, Protocol
 
 from anthropic import AsyncAnthropic
 from anthropic.types import MessageParam, TextBlockParam
+
+from project0.llm.tools import AssistantToolUseMsg, ToolResultMsg, ToolSpec, ToolUseResult
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +55,16 @@ class LLMProvider(Protocol):
     ) -> str:
         ...
 
+    async def complete_with_tools(
+        self,
+        *,
+        system: str,
+        messages: list[Msg | AssistantToolUseMsg | ToolResultMsg],
+        tools: list[ToolSpec],
+        max_tokens: int = 1024,
+    ) -> ToolUseResult:
+        ...
+
 
 @dataclass
 class FakeProvider:
@@ -63,7 +74,10 @@ class FakeProvider:
     responses: list[str] | None = None
     callable_: Callable[[str, list[Msg]], str] | None = None
     calls: list[ProviderCall] = field(default_factory=list)
+    tool_responses: list[ToolUseResult] | None = None
+    tool_calls_log: list[dict] = field(default_factory=list)
     _idx: int = 0
+    _tool_idx: int = 0
 
     async def complete(
         self,
@@ -86,6 +100,36 @@ class FakeProvider:
             )
         out = self.responses[self._idx]
         self._idx += 1
+        return out
+
+    async def complete_with_tools(
+        self,
+        *,
+        system: str,
+        messages: list[Msg | AssistantToolUseMsg | ToolResultMsg],
+        tools: list[ToolSpec],
+        max_tokens: int = 1024,
+    ) -> ToolUseResult:
+        self.tool_calls_log.append(
+            {
+                "system": system,
+                "messages": list(messages),
+                "tools": list(tools),
+                "max_tokens": max_tokens,
+            }
+        )
+        if self.tool_responses is None:
+            raise LLMProviderError(
+                "FakeProvider.complete_with_tools called but tool_responses is None"
+            )
+        if self._tool_idx >= len(self.tool_responses):
+            raise LLMProviderError(
+                f"FakeProvider.complete_with_tools exhausted: "
+                f"{len(self.tool_responses)} canned tool_responses, "
+                f"{self._tool_idx + 1} requested"
+            )
+        out = self.tool_responses[self._tool_idx]
+        self._tool_idx += 1
         return out
 
 
