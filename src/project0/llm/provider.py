@@ -6,11 +6,11 @@ method when Manager needs it). Prompt caching is an implementation detail of
 `AnthropicProvider` — it does not leak into the interface, so local-model
 providers can simply ignore it.
 
-Two implementations live here:
-  - `AnthropicProvider`: real, uses `claude-sonnet-4-6`, enables prompt caching
-    on the system prompt block (persona prefix is stable, so the cache hit
-    rate on a busy chat is very high).
+Implementations:
   - `FakeProvider`: tests. Canned responses or a callable; records every call.
+  - `AnthropicProvider`: added in sub-project 6a Task 5 — wraps
+    `anthropic.AsyncAnthropic`, enables prompt caching on the system prompt
+    block. Not present in this file yet.
 """
 
 from __future__ import annotations
@@ -66,7 +66,9 @@ class FakeProvider:
         messages: list[Msg],
         max_tokens: int = 800,
     ) -> str:
-        self.calls.append(ProviderCall(system=system, messages=list(messages), max_tokens=max_tokens))
+        self.calls.append(
+            ProviderCall(system=system, messages=list(messages), max_tokens=max_tokens)
+        )
         if self.callable_ is not None:
             return self.callable_(system, messages)
         if self.responses is None:
