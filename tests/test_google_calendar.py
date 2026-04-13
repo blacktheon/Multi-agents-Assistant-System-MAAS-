@@ -159,3 +159,24 @@ def test_unknown_field_does_not_warn_for_ignorable_keys() -> None:
     assert model_mod._warned_unknown_keys == set()
     raw_event_to_model(raw, BEIJING)
     assert model_mod._warned_unknown_keys == set()
+
+
+def test_auth_writes_token_chmod_600(tmp_path: Path) -> None:
+    # We call the private helper directly: the full flow requires a real
+    # Google consent dance and cannot be unit-tested. The chmod step is
+    # the only piece we can deterministically verify without the network.
+    from unittest.mock import MagicMock
+
+    from project0.calendar import auth as auth_mod
+
+    fake_creds = MagicMock()
+    fake_creds.to_json.return_value = '{"token": "fake"}'
+
+    token_path = tmp_path / "subdir" / "google_token.json"
+    auth_mod._write_token(token_path, fake_creds)
+
+    assert token_path.exists()
+    assert token_path.read_text(encoding="utf-8") == '{"token": "fake"}'
+    # On POSIX, check the file mode is exactly 0o600.
+    mode = token_path.stat().st_mode & 0o777
+    assert mode == 0o600, f"expected mode 0o600, got {oct(mode)}"
