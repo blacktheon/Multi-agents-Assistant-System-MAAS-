@@ -1,0 +1,20 @@
+# Manager agent configuration.
+# Mirrors the Secretary config pattern. Missing keys raise at startup.
+
+[llm]
+model               = "claude-sonnet-4-6"
+max_tokens_reply    = 1024
+max_tool_iterations = 8
+
+[context]
+transcript_window = 20
+
+# Scheduled pulses. Each [[pulse]] entry becomes one asyncio scheduler task.
+# `chat_id_env` names an environment variable whose value is the integer
+# Telegram chat id to bind this pulse to. Required for pulses that may
+# delegate user-facing messages (otherwise the reminder has nowhere to go).
+[[pulse]]
+name         = "check_calendar"
+every_seconds = 300
+chat_id_env  = "MANAGER_PULSE_CHAT_ID"
+payload      = { window_minutes = 60 }
