@@ -17,12 +17,12 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from anthropic import AsyncAnthropic
 from anthropic.types import MessageParam, TextBlockParam
 
-from project0.llm.tools import AssistantToolUseMsg, ToolResultMsg, ToolSpec, ToolUseResult
+from project0.llm.tools import AssistantToolUseMsg, ToolCall, ToolResultMsg, ToolSpec, ToolUseResult
 
 log = logging.getLogger(__name__)
 
@@ -176,3 +176,101 @@ class AnthropicProvider:
                 if text:
                     return str(text)
         raise LLMProviderError("anthropic response contained no text block")
+
+    async def complete_with_tools(
+        self,
+        *,
+        system: str,
+        messages: list[Msg | AssistantToolUseMsg | ToolResultMsg],
+        tools: list[ToolSpec],
+        max_tokens: int = 1024,
+    ) -> ToolUseResult:
+        sdk_messages: list[dict[str, Any]] = []
+        for m in messages:
+            if isinstance(m, Msg):
+                sdk_messages.append({"role": m.role, "content": m.content})
+            elif isinstance(m, AssistantToolUseMsg):
+                blocks: list[dict[str, Any]] = []
+                if m.text:
+                    blocks.append({"type": "text", "text": m.text})
+                for tc in m.tool_calls:
+                    blocks.append({
+                        "type": "tool_use",
+                        "id": tc.id,
+                        "name": tc.name,
+                        "input": tc.input,
+                    })
+                sdk_messages.append({"role": "assistant", "content": blocks})
+            elif isinstance(m, ToolResultMsg):
+                tr_block: dict[str, Any] = {
+                    "type": "tool_result",
+                    "tool_use_id": m.tool_use_id,
+                    "content": m.content,
+                }
+                if m.is_error:
+                    tr_block["is_error"] = True
+                sdk_messages.append({"role": "user", "content": [tr_block]})
+            else:
+                raise LLMProviderError(f"unknown message variant: {type(m).__name__}")
+
+        sdk_tools = [
+            {
+                "name": t.name,
+                "description": t.description,
+                "input_schema": t.input_schema,
+            }
+            for t in tools
+        ]
+
+        system_block = [
+            {
+                "type": "text",
+                "text": system,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+
+        try:
+            resp = await self._client.messages.create(
+                model=self._model,
+                max_tokens=max_tokens,
+                system=system_block,
+                messages=sdk_messages,
+                tools=sdk_tools,
+            )
+        except Exception as e:
+            log.exception("anthropic tool-use call failed")
+            raise LLMProviderError(f"anthropic {type(e).__name__}") from e
+
+        text_preamble: str | None = None
+        tool_calls: list[ToolCall] = []
+        for block in resp.content:
+            btype = getattr(block, "type", None)
+            if btype == "text":
+                if text_preamble is None:
+                    text_preamble = getattr(block, "text", None)
+            elif btype == "tool_use":
+                tool_calls.append(
+                    ToolCall(
+                        id=getattr(block, "id"),
+                        name=getattr(block, "name"),
+                        input=dict(getattr(block, "input", {}) or {}),
+                    )
+                )
+
+        stop_reason = getattr(resp, "stop_reason", None)
+        if tool_calls:
+            return ToolUseResult(
+                kind="tool_use",
+                text=text_preamble,
+                tool_calls=tool_calls,
+                stop_reason=stop_reason,
+            )
+        if text_preamble is None:
+            raise LLMProviderError("anthropic response contained no text or tool_use block")
+        return ToolUseResult(
+            kind="text",
+            text=text_preamble,
+            tool_calls=[],
+            stop_reason=stop_reason,
+        )
