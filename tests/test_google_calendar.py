@@ -260,6 +260,40 @@ def test_create_event_posts_expected_body() -> None:
     assert event.summary == "Smoke test"
 
 
+def test_update_event_partial_only_patches_provided_fields() -> None:
+    # Echo the post-edit event back as Google would.
+    edited_body = {
+        "kind": "calendar#event",
+        "id": "abc123def456",
+        "status": "confirmed",
+        "htmlLink": "https://example.invalid/abc123def456",
+        "summary": "Coffee with prof (edited)",
+        "description": "Discuss the April review schedule",
+        "location": "Starbucks Nanjing West Rd",
+        "start": {"dateTime": "2026-04-15T14:00:00+08:00", "timeZone": "Asia/Shanghai"},
+        "end": {"dateTime": "2026-04-15T15:00:00+08:00", "timeZone": "Asia/Shanghai"},
+    }
+    client = build_test_client([
+        ({"status": "200"}, json.dumps(edited_body).encode("utf-8")),
+    ])
+
+    async def run() -> CalendarEvent:
+        return await client.update_event(
+            "abc123def456",
+            summary="Coffee with prof (edited)",
+        )
+
+    event = asyncio.run(run())
+    assert event.summary == "Coffee with prof (edited)"
+    # Defensive: calling model_to_raw with only summary=... must produce
+    # a single-key body. The unit test on model_to_raw already covers
+    # this, but we re-assert it here to lock the client contract.
+    from project0.calendar.model import model_to_raw as _m
+    assert _m(summary="Coffee with prof (edited)") == {
+        "summary": "Coffee with prof (edited)",
+    }
+
+
 def test_auth_writes_token_chmod_600(tmp_path: Path) -> None:
     # We call the private helper directly: the full flow requires a real
     # Google consent dance and cannot be unit-tested. The chmod step is

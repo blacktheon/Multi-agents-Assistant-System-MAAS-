@@ -139,6 +139,59 @@ class GoogleCalendar:
             raise GoogleCalendarError(f"create_event failed: {e}") from e
         return raw_event_to_model(raw, self._user_tz)
 
+    async def update_event(
+        self,
+        event_id: str,
+        *,
+        summary: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        description: str | None = None,
+        location: str | None = None,
+    ) -> CalendarEvent:
+        if start is not None:
+            _require_aware(start, "start")
+        if end is not None:
+            _require_aware(end, "end")
+        return await asyncio.to_thread(
+            self._sync_update_event,
+            event_id, summary, start, end, description, location,
+        )
+
+    def _sync_update_event(
+        self,
+        event_id: str,
+        summary: str | None,
+        start: datetime | None,
+        end: datetime | None,
+        description: str | None,
+        location: str | None,
+    ) -> CalendarEvent:
+        body = model_to_raw(
+            summary=summary,
+            start=start,
+            end=end,
+            description=description,
+            location=location,
+        )
+        try:
+            raw: dict[str, Any] = (
+                self._service.events().patch(
+                    calendarId=self._calendar_id,
+                    eventId=event_id,
+                    body=body,
+                ).execute()
+            )
+        except HttpError as e:
+            raise GoogleCalendarError(
+                f"update_event({event_id!r}) failed: HTTP {e.resp.status}"
+            ) from e
+        except Exception as e:  # noqa: BLE001
+            raise GoogleCalendarError(
+                f"update_event({event_id!r}) failed: {e}"
+            ) from e
+        return raw_event_to_model(raw, self._user_tz)
+
     async def get_event(self, event_id: str) -> CalendarEvent:
         return await asyncio.to_thread(self._sync_get_event, event_id)
 
