@@ -1,0 +1,44 @@
+{
+  "kind": "calendar#events",
+  "etag": "\"p32nojnu9p7lp60o\"",
+  "summary": "blacktheon@gmail.com",
+  "description": "",
+  "updated": "2026-04-13T19:36:26.418Z",
+  "timeZone": "Asia/Singapore",
+  "accessRole": "owner",
+  "defaultReminders": [],
+  "nextPageToken": "EiwKKhIoCgYIgKb0zgYSHgocChpqYmczbGU3aWhmZWZhcjEyMTViMTRwb3BiNMA-AQ==",
+  "items": [
+    {
+      "kind": "calendar#event",
+      "etag": "\"3552217888393054\"",
+      "id": "jbg3le7ihfefar1215b14popb4",
+      "status": "confirmed",
+      "htmlLink": "https://www.google.com/calendar/event?eid=amJnM2xlN2loZmVmYXIxMjE1YjE0cG9wYjQgYmxhY2t0aGVvbkBt",
+      "created": "2026-04-13T19:35:43.000Z",
+      "updated": "2026-04-13T19:35:44.196Z",
+      "summary": "Project-0",
+      "creator": {
+        "email": "blacktheon@gmail.com",
+        "self": true
+      },
+      "organizer": {
+        "email": "blacktheon@gmail.com",
+        "self": true
+      },
+      "start": {
+        "date": "2026-04-14"
+      },
+      "end": {
+        "date": "2026-04-15"
+      },
+      "transparency": "transparent",
+      "iCalUID": "jbg3le7ihfefar1215b14popb4@google.com",
+      "sequence": 0,
+      "reminders": {
+        "useDefault": false
+      },
+      "eventType": "default"
+    }
+  ]
+}

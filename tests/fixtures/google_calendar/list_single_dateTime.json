@@ -1,0 +1,51 @@
+{
+  "kind": "calendar#events",
+  "etag": "\"p33nsj5s0p3lp60o\"",
+  "summary": "blacktheon@gmail.com",
+  "description": "",
+  "updated": "2026-04-13T19:29:23.719Z",
+  "timeZone": "Asia/Singapore",
+  "accessRole": "owner",
+  "defaultReminders": [],
+  "nextPageToken": "EjIKMBIuCgYI-Pj1zgYSJAoiCiBiZTc4ZTg5MGRiYzE0OWUyYTZiZWZmYjFkOGE5MzNkYsA-AQ==",
+  "items": [
+    {
+      "kind": "calendar#event",
+      "etag": "\"3521411527311102\"",
+      "id": "be78e890dbc149e2a6beffb1d8a933db_20260413T233000Z",
+      "status": "confirmed",
+      "htmlLink": "https://www.google.com/calendar/event?eid=YmU3OGU4OTBkYmMxNDllMmE2YmVmZmIxZDhhOTMzZGJfMjAyNjA0MTNUMjMzMDAwWiBibGFja3RoZW9uQG0",
+      "created": "2025-10-17T12:56:03.000Z",
+      "updated": "2025-10-17T12:56:03.655Z",
+      "summary": "起床",
+      "creator": {
+        "email": "blacktheon@gmail.com",
+        "self": true
+      },
+      "organizer": {
+        "email": "blacktheon@gmail.com",
+        "self": true
+      },
+      "start": {
+        "dateTime": "2026-04-14T07:30:00+08:00",
+        "timeZone": "Asia/Singapore"
+      },
+      "end": {
+        "dateTime": "2026-04-14T08:00:00+08:00",
+        "timeZone": "Asia/Singapore"
+      },
+      "recurringEventId": "be78e890dbc149e2a6beffb1d8a933db",
+      "originalStartTime": {
+        "dateTime": "2026-04-14T07:30:00+08:00",
+        "timeZone": "Asia/Singapore"
+      },
+      "iCalUID": "be78e890dbc149e2a6beffb1d8a933db@google.com",
+      "sequence": 0,
+      "guestsCanModify": true,
+      "reminders": {
+        "useDefault": true
+      },
+      "eventType": "default"
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "kind": "calendar#event",
+  "etag": "\"3552218158063582\"",
+  "id": "u4fq0foonpn9sp10ou9ukhegr4",
+  "status": "confirmed",
+  "htmlLink": "https://www.google.com/calendar/event?eid=dTRmcTBmb29ucG45c3AxMG91OXVraGVncjQgYmxhY2t0aGVvbkBt",
+  "created": "2026-04-13T19:37:45.000Z",
+  "updated": "2026-04-13T19:37:59.031Z",
+  "summary": "Project 0 smoke test (edited)",
+  "description": "created by calendar_smoke.py — safe to delete",
+  "creator": {
+    "email": "blacktheon@gmail.com",
+    "self": true
+  },
+  "organizer": {
+    "email": "blacktheon@gmail.com",
+    "self": true
+  },
+  "start": {
+    "dateTime": "2026-04-14T04:37:44+08:00",
+    "timeZone": "Asia/Singapore"
+  },
+  "end": {
+    "dateTime": "2026-04-14T05:37:44+08:00",
+    "timeZone": "Asia/Singapore"
+  },
+  "iCalUID": "u4fq0foonpn9sp10ou9ukhegr4@google.com",
+  "sequence": 0,
+  "reminders": {
+    "useDefault": true
+  },
+  "eventType": "default",
+  "futureFieldFromGoogle": {
+    "someValue": 42
+  }
+}
