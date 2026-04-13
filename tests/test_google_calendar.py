@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
+from googleapiclient.http import HttpMockSequence
 
 from project0.calendar import model as model_mod
-from project0.calendar.model import model_to_raw, raw_event_to_model
+from project0.calendar.client import GoogleCalendar
+from project0.calendar.model import CalendarEvent, model_to_raw, raw_event_to_model
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "google_calendar"
 BEIJING = ZoneInfo("Asia/Shanghai")
@@ -159,6 +162,53 @@ def test_unknown_field_does_not_warn_for_ignorable_keys() -> None:
     assert model_mod._warned_unknown_keys == set()
     raw_event_to_model(raw, BEIJING)
     assert model_mod._warned_unknown_keys == set()
+
+
+def build_test_client(responses: list[tuple[dict[str, str], bytes]]) -> GoogleCalendar:
+    """Construct a GoogleCalendar whose SDK service uses HttpMockSequence.
+
+    Each ``(headers, body)`` tuple in ``responses`` is returned by the
+    mock HTTP transport in order. Responses map 1:1 to the API calls the
+    test makes (the discovery document is already bundled locally and is
+    not fetched over HTTP when ``developerKey`` is supplied to ``build``).
+    """
+    from googleapiclient.discovery import build as _build
+
+    http = HttpMockSequence(list(responses))
+    service = _build("calendar", "v3", http=http, developerKey="fake")
+    return GoogleCalendar(
+        credentials=None,  # type: ignore[arg-type]
+        calendar_id="primary",
+        user_tz=BEIJING,
+        _service=service,
+    )
+
+
+def test_list_events_returns_translated_events() -> None:
+    body = json.dumps(load_fixture("list_single_dateTime.json")).encode("utf-8")
+    client = build_test_client([({"status": "200"}, body)])
+
+    async def run() -> list[CalendarEvent]:
+        now = datetime.fromisoformat("2026-04-14T00:00:00+08:00")
+        return await client.list_events(now, now + timedelta(days=7))
+
+    events = asyncio.run(run())
+
+    assert len(events) == 1
+    assert events[0].id == "abc123def456"
+    assert events[0].summary == "Coffee with prof"
+
+
+def test_list_events_rejects_naive_datetime() -> None:
+    client = build_test_client([])
+    naive = datetime(2026, 4, 14, 0, 0, 0)
+    aware = datetime.fromisoformat("2026-04-14T00:00:00+08:00")
+
+    async def run() -> None:
+        await client.list_events(naive, aware)
+
+    with pytest.raises(ValueError, match="time_min"):
+        asyncio.run(run())
 
 
 def test_auth_writes_token_chmod_600(tmp_path: Path) -> None:

@@ -47,5 +47,5 @@ mypy_path = "src"
 packages = ["project0"]
 
 [[tool.mypy.overrides]]
-module = ["google.*", "google_auth_oauthlib.*"]
+module = ["google.*", "google_auth_oauthlib.*", "googleapiclient.*"]
 ignore_missing_imports = true
