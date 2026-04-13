@@ -15,6 +15,7 @@ from googleapiclient.errors import HttpError
 from project0.calendar.errors import GoogleCalendarError
 from project0.calendar.model import (
     CalendarEvent,
+    model_to_raw,
     raw_event_to_model,
 )
 
@@ -93,6 +94,50 @@ class GoogleCalendar:
         items: list[dict[str, Any]] = response.get("items", [])
         return [raw_event_to_model(item, self._user_tz) for item in items]
 
+
+    async def create_event(
+        self,
+        summary: str,
+        start: datetime,
+        end: datetime,
+        description: str | None = None,
+        location: str | None = None,
+    ) -> CalendarEvent:
+        _require_aware(start, "start")
+        _require_aware(end, "end")
+        return await asyncio.to_thread(
+            self._sync_create_event, summary, start, end, description, location,
+        )
+
+    def _sync_create_event(
+        self,
+        summary: str,
+        start: datetime,
+        end: datetime,
+        description: str | None,
+        location: str | None,
+    ) -> CalendarEvent:
+        body = model_to_raw(
+            summary=summary,
+            start=start,
+            end=end,
+            description=description,
+            location=location,
+        )
+        try:
+            raw: dict[str, Any] = (
+                self._service.events().insert(
+                    calendarId=self._calendar_id,
+                    body=body,
+                ).execute()
+            )
+        except HttpError as e:
+            raise GoogleCalendarError(
+                f"create_event failed: HTTP {e.resp.status}"
+            ) from e
+        except Exception as e:  # noqa: BLE001
+            raise GoogleCalendarError(f"create_event failed: {e}") from e
+        return raw_event_to_model(raw, self._user_tz)
 
     async def get_event(self, event_id: str) -> CalendarEvent:
         return await asyncio.to_thread(self._sync_get_event, event_id)

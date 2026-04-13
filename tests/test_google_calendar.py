@@ -227,6 +227,39 @@ def test_get_event_returns_translated_event() -> None:
     assert event.all_day is False
 
 
+def test_create_event_posts_expected_body() -> None:
+    # Google returns the created event as the response body.
+    created_body = {
+        "kind": "calendar#event",
+        "id": "newevent001",
+        "status": "confirmed",
+        "htmlLink": "https://example.invalid/newevent001",
+        "summary": "Smoke test",
+        "description": "created by test",
+        "location": "Room 1",
+        "start": {"dateTime": "2026-04-20T14:00:00+08:00", "timeZone": "Asia/Shanghai"},
+        "end": {"dateTime": "2026-04-20T15:00:00+08:00", "timeZone": "Asia/Shanghai"},
+    }
+    client = build_test_client([
+        ({"status": "200"}, json.dumps(created_body).encode("utf-8")),
+    ])
+
+    async def run() -> CalendarEvent:
+        start = datetime.fromisoformat("2026-04-20T14:00:00+08:00")
+        end = datetime.fromisoformat("2026-04-20T15:00:00+08:00")
+        return await client.create_event(
+            summary="Smoke test",
+            start=start,
+            end=end,
+            description="created by test",
+            location="Room 1",
+        )
+
+    event = asyncio.run(run())
+    assert event.id == "newevent001"
+    assert event.summary == "Smoke test"
+
+
 def test_auth_writes_token_chmod_600(tmp_path: Path) -> None:
     # We call the private helper directly: the full flow requires a real
     # Google consent dance and cannot be unit-tested. The chmod step is
