@@ -91,3 +91,68 @@ def test_agent_result_validation_rejects_delegation_without_handoff_text():
 
     with pytest.raises(RoutingError):
         AgentResult(reply_text=None, delegate_to="intelligence", handoff_text=None)
+
+
+def test_envelope_payload_roundtrips() -> None:
+    env = Envelope(
+        id=None,
+        ts="2026-04-13T12:00:00Z",
+        parent_id=None,
+        source="internal",
+        telegram_chat_id=123,
+        telegram_msg_id=None,
+        received_by_bot=None,
+        from_kind="agent",
+        from_agent="manager",
+        to_agent="secretary",
+        body="reminder",
+        mentions=[],
+        routing_reason="manager_delegation",
+        payload={"kind": "reminder_request", "appointment": "项目评审", "when": "明天下午3点"},
+    )
+    blob = env.to_json()
+    roundtripped = Envelope.from_json(blob)
+    assert roundtripped.payload == {
+        "kind": "reminder_request",
+        "appointment": "项目评审",
+        "when": "明天下午3点",
+    }
+
+
+def test_envelope_payload_defaults_to_none() -> None:
+    env = Envelope(
+        id=None,
+        ts="2026-04-13T12:00:00Z",
+        parent_id=None,
+        source="telegram_group",
+        telegram_chat_id=123,
+        telegram_msg_id=456,
+        received_by_bot="manager",
+        from_kind="user",
+        from_agent=None,
+        to_agent="manager",
+        body="hi",
+        routing_reason="default_manager",
+    )
+    assert env.payload is None
+    # ensure payload survives a roundtrip even when None
+    assert Envelope.from_json(env.to_json()).payload is None
+
+
+def test_envelope_listener_observation_routing_reason() -> None:
+    env = Envelope(
+        id=None,
+        ts="2026-04-13T12:00:00Z",
+        parent_id=1,
+        source="internal",
+        telegram_chat_id=123,
+        telegram_msg_id=None,
+        received_by_bot=None,
+        from_kind="system",
+        from_agent=None,
+        to_agent="secretary",
+        body="hi everyone",
+        routing_reason="listener_observation",
+    )
+    roundtripped = Envelope.from_json(env.to_json())
+    assert roundtripped.routing_reason == "listener_observation"
