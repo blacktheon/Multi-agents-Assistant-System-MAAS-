@@ -18,7 +18,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from project0.agents.registry import AGENT_REGISTRY
+from project0.agents.registry import AGENT_REGISTRY, LISTENER_REGISTRY
 from project0.envelope import Envelope, RoutingReason
 from project0.errors import RoutingError
 from project0.mentions import parse_mentions
@@ -102,6 +102,8 @@ class Orchestrator:
         agent_fn = AGENT_REGISTRY[persisted.to_agent]
         result = await agent_fn(persisted)
 
+        final_focus_target: str = persisted.to_agent
+
         async with self.store.lock:
             if result.is_reply():
                 await self._emit_reply(
@@ -109,8 +111,18 @@ class Orchestrator:
                     speaker=persisted.to_agent,
                     text=result.reply_text or "",
                 )
-                return
+                reply_handled = True
+            else:
+                reply_handled = False
 
+        if reply_handled:
+            await self._fan_out_listeners(
+                original_user_envelope=persisted,
+                focus_target=final_focus_target,
+            )
+            return
+
+        async with self.store.lock:
             # Delegation authority: only Manager may delegate.
             if persisted.to_agent != "manager":
                 raise RoutingError(
@@ -167,12 +179,19 @@ class Orchestrator:
                 f"delegated agent {target!r} tried to return non-reply result"
             )
 
+        final_focus_target = target
+
         async with self.store.lock:
             await self._emit_reply(
                 parent=persisted_internal,
                 speaker=target,
                 text=target_result.reply_text or "",
             )
+
+        await self._fan_out_listeners(
+            original_user_envelope=persisted,
+            focus_target=final_focus_target,
+        )
 
     # --- helpers -------------------------------------------------------------
 
@@ -243,3 +262,59 @@ class Orchestrator:
             await self.sender.send(
                 agent=speaker, chat_id=parent.telegram_chat_id, text=text
             )
+
+    async def _fan_out_listeners(
+        self,
+        *,
+        original_user_envelope: Envelope,
+        focus_target: str,
+    ) -> None:
+        """Dispatch a listener_observation envelope to every listener
+        whose name is not `focus_target`. Sequential; errors propagate."""
+        if original_user_envelope.source != "telegram_group":
+            return
+        assert original_user_envelope.id is not None
+
+        for listener_name, listener_fn in LISTENER_REGISTRY.items():
+            if listener_name == focus_target:
+                continue
+
+            async with self.store.lock:
+                sibling = Envelope(
+                    id=None,
+                    ts=_utc_now_iso(),
+                    parent_id=original_user_envelope.id,
+                    source="internal",
+                    telegram_chat_id=original_user_envelope.telegram_chat_id,
+                    telegram_msg_id=None,
+                    received_by_bot=None,
+                    from_kind="system",
+                    from_agent=None,
+                    to_agent=listener_name,
+                    body=original_user_envelope.body,
+                    mentions=[],
+                    routing_reason="listener_observation",
+                )
+                persisted_sibling = self.store.messages().insert(sibling)
+                assert persisted_sibling is not None
+
+            # Dispatch outside the lock.
+            result = await listener_fn(persisted_sibling)
+            if result is None:
+                log.debug("listener %s observed silently", listener_name)
+                continue
+            if result.delegate_to is not None:
+                raise RoutingError(
+                    f"listener {listener_name!r} returned delegate_to="
+                    f"{result.delegate_to!r}; listeners cannot delegate"
+                )
+            if result.reply_text is None:
+                log.warning("listener %s returned empty reply", listener_name)
+                continue
+
+            async with self.store.lock:
+                await self._emit_reply(
+                    parent=persisted_sibling,
+                    speaker=listener_name,
+                    text=result.reply_text,
+                )
