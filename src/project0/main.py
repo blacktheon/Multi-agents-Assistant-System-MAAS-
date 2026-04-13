@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 
-from anthropic import AsyncAnthropic  # imported to fail fast on bad key
-
-from project0.agents.registry import AGENT_SPECS
+from project0.agents.registry import AGENT_SPECS, register_secretary
+from project0.agents.secretary import Secretary, load_config, load_persona
 from project0.config import Settings, load_settings
+from project0.llm.provider import AnthropicProvider, FakeProvider, LLMProvider
 from project0.orchestrator import Orchestrator
 from project0.store import Store
 from project0.telegram_io import (
@@ -37,18 +38,48 @@ def _ensure_store_dir(store_path: str) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
 
 
-def _validate_anthropic_key(settings: Settings) -> None:
-    """Instantiate the Anthropic client to validate the key shape, but do
-    not make any API call. If the skeleton ever starts calling Claude,
-    this is the seam where a smoke-test call would go."""
-    _client = AsyncAnthropic(api_key=settings.anthropic_api_key)
-    del _client
+def _build_llm_provider(settings: Settings) -> LLMProvider:
+    """Construct the LLM provider based on LLM_PROVIDER env var.
+
+    Instantiation does not hit the network; a bad Anthropic key surfaces
+    as an LLMProviderError on the first Secretary call rather than at
+    startup. load_settings already rejected obviously-malformed keys
+    (empty or not starting with 'sk-').
+    """
+    provider_name = os.environ.get("LLM_PROVIDER", "anthropic").strip().lower() or "anthropic"
+    model = os.environ.get("LLM_MODEL", "claude-sonnet-4-6").strip() or "claude-sonnet-4-6"
+
+    if provider_name == "anthropic":
+        return AnthropicProvider(api_key=settings.anthropic_api_key, model=model)
+    if provider_name == "fake":
+        log.warning("LLM_PROVIDER=fake — using FakeProvider. Not for production.")
+        return FakeProvider(responses=["(fake provider response)"] * 10_000)
+    raise RuntimeError(f"unknown LLM_PROVIDER={provider_name!r}")
 
 
 async def _run(settings: Settings) -> None:
     _ensure_store_dir(settings.store_path)
     store = Store(settings.store_path)
     store.init_schema()
+
+    # Build the LLM provider once; share it across agents.
+    llm = _build_llm_provider(settings)
+
+    # Construct Secretary and install it into both registries. This MUST
+    # happen before the orchestrator handles any message — AGENT_SPECS
+    # already lists secretary, so load_settings will have demanded its
+    # bot token above.
+    persona = load_persona(Path("prompts/secretary.md"))
+    secretary_cfg = load_config(Path("prompts/secretary.toml"))
+    secretary = Secretary(
+        llm=llm,
+        memory=store.agent_memory("secretary"),
+        messages_store=store.messages(),
+        persona=persona,
+        config=secretary_cfg,
+    )
+    register_secretary(secretary.handle)
+    log.info("secretary registered (model=%s)", secretary_cfg.model)
 
     # Sanity-check that every registered agent has a token.
     for agent_name in AGENT_SPECS:
@@ -113,7 +144,6 @@ async def _run(settings: Settings) -> None:
 def main() -> None:
     settings = load_settings()
     _setup_logging(settings.log_level)
-    _validate_anthropic_key(settings)
     try:
         asyncio.run(_run(settings))
     except KeyboardInterrupt:

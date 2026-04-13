@@ -27,6 +27,7 @@ RoutingReason = Literal[
     "default_manager",
     "manager_delegation",
     "outbound_reply",
+    "listener_observation",
 ]
 
 
@@ -45,6 +46,7 @@ class Envelope:
     body: str
     mentions: list[str] = field(default_factory=list)
     routing_reason: RoutingReason = "default_manager"
+    payload: dict[str, Any] | None = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), separators=(",", ":"), sort_keys=True)

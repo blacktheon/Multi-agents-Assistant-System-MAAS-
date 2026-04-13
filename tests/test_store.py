@@ -6,6 +6,8 @@ an AgentMemory scoped to one agent CANNOT read rows written by another.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from project0.envelope import Envelope
 from project0.store import Store
 
@@ -270,3 +272,152 @@ def test_has_recent_user_text_in_group_ignores_internal_rows(store: Store) -> No
     assert msgs.has_recent_user_text_in_group(
         chat_id=-100, body="canary body", within_seconds=99999
     ) is False
+
+
+def test_messages_insert_persists_payload(tmp_path: Path) -> None:
+    from project0.envelope import Envelope
+    from project0.store import Store
+
+    store = Store(tmp_path / "t.db")
+    store.init_schema()
+
+    env = Envelope(
+        id=None,
+        ts="2026-04-13T12:00:00Z",
+        parent_id=None,
+        source="internal",
+        telegram_chat_id=100,
+        telegram_msg_id=None,
+        received_by_bot=None,
+        from_kind="agent",
+        from_agent="manager",
+        to_agent="secretary",
+        body="reminder body",
+        routing_reason="manager_delegation",
+        payload={"kind": "reminder_request", "appointment": "项目评审"},
+    )
+    persisted = store.messages().insert(env)
+    assert persisted is not None
+    assert persisted.payload == {"kind": "reminder_request", "appointment": "项目评审"}
+
+    # Round-trip via fetch_children from a freshly inserted parent.
+    parent = Envelope(
+        id=None,
+        ts="2026-04-13T11:59:00Z",
+        parent_id=None,
+        source="telegram_group",
+        telegram_chat_id=100,
+        telegram_msg_id=1,
+        received_by_bot="manager",
+        from_kind="user",
+        from_agent=None,
+        to_agent="manager",
+        body="anchor",
+        routing_reason="default_manager",
+    )
+    parent_persisted = store.messages().insert(parent)
+    assert parent_persisted is not None
+
+    child = Envelope(
+        id=None,
+        ts="2026-04-13T12:00:01Z",
+        parent_id=parent_persisted.id,
+        source="internal",
+        telegram_chat_id=100,
+        telegram_msg_id=None,
+        received_by_bot=None,
+        from_kind="agent",
+        from_agent="manager",
+        to_agent="secretary",
+        body="child with payload",
+        routing_reason="manager_delegation",
+        payload={"kind": "reminder_request", "when": "明天"},
+    )
+    store.messages().insert(child)
+    children = store.messages().fetch_children(parent_persisted.id or 0)
+    assert len(children) == 1
+    assert children[0].payload == {"kind": "reminder_request", "when": "明天"}
+
+
+def test_messages_insert_null_payload_works(tmp_path: Path) -> None:
+    from project0.envelope import Envelope
+    from project0.store import Store
+
+    store = Store(tmp_path / "t.db")
+    store.init_schema()
+    env = Envelope(
+        id=None,
+        ts="2026-04-13T12:00:00Z",
+        parent_id=None,
+        source="telegram_group",
+        telegram_chat_id=100,
+        telegram_msg_id=2,
+        received_by_bot="manager",
+        from_kind="user",
+        from_agent=None,
+        to_agent="manager",
+        body="no payload",
+        routing_reason="default_manager",
+    )
+    persisted = store.messages().insert(env)
+    assert persisted is not None
+    assert persisted.payload is None
+
+
+def test_messages_recent_for_chat_returns_in_chronological_order(tmp_path: Path) -> None:
+    from project0.envelope import Envelope
+    from project0.store import Store
+
+    store = Store(tmp_path / "t.db")
+    store.init_schema()
+
+    def env(msg_id: int, ts: str, body: str, chat_id: int = 500) -> Envelope:
+        return Envelope(
+            id=None,
+            ts=ts,
+            parent_id=None,
+            source="telegram_group",
+            telegram_chat_id=chat_id,
+            telegram_msg_id=msg_id,
+            received_by_bot="manager",
+            from_kind="user",
+            from_agent=None,
+            to_agent="manager",
+            body=body,
+            routing_reason="default_manager",
+        )
+
+    store.messages().insert(env(1, "2026-04-13T12:00:00Z", "first"))
+    store.messages().insert(env(2, "2026-04-13T12:00:05Z", "second"))
+    store.messages().insert(env(3, "2026-04-13T12:00:10Z", "third"))
+    # Another chat to verify isolation.
+    store.messages().insert(env(10, "2026-04-13T12:00:07Z", "other-chat", chat_id=999))
+
+    got = store.messages().recent_for_chat(chat_id=500, limit=10)
+    assert [e.body for e in got] == ["first", "second", "third"]
+
+
+def test_messages_recent_for_chat_respects_limit(tmp_path: Path) -> None:
+    from project0.envelope import Envelope
+    from project0.store import Store
+
+    store = Store(tmp_path / "t.db")
+    store.init_schema()
+    for i in range(5):
+        store.messages().insert(Envelope(
+            id=None,
+            ts=f"2026-04-13T12:00:{i:02d}Z",
+            parent_id=None,
+            source="telegram_group",
+            telegram_chat_id=700,
+            telegram_msg_id=i + 1,
+            received_by_bot="manager",
+            from_kind="user",
+            from_agent=None,
+            to_agent="manager",
+            body=f"msg-{i}",
+            routing_reason="default_manager",
+        ))
+
+    got = store.messages().recent_for_chat(chat_id=700, limit=3)
+    assert [e.body for e in got] == ["msg-2", "msg-3", "msg-4"]
