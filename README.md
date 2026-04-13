@@ -230,3 +230,45 @@ Then commit the updated fixtures.
 To revoke Project 0's access entirely, visit
 https://myaccount.google.com/permissions, find "Project 0" in the list,
 and remove its access. Delete `data/google_token.json` locally afterwards.
+
+## Sub-project 6c — Manager + pulse
+
+Manager is now a real LLM agent with calendar tool use and scheduled pulses.
+
+### Required env vars (in addition to 6a/6b)
+
+- `MANAGER_PULSE_CHAT_ID` — integer Telegram chat id where the Manager's
+  `check_calendar` pulse should deliver reminders (via Secretary). Must be
+  one of `TELEGRAM_ALLOWED_CHAT_IDS`. Omit the variable to disable that
+  pulse entry (the loader will raise at startup — which is what you want).
+
+### Smoke run
+
+```bash
+uv run python -m project0.main
+```
+
+Expected log lines on a healthy start:
+
+```
+INFO project0 :: google calendar ready (calendar_id=primary tz=Asia/Shanghai)
+INFO project0 :: manager registered (model=claude-sonnet-4-6)
+INFO project0 :: manager pulse entries: [('check_calendar', 300)]
+INFO project0 :: pulse task spawned: check_calendar
+```
+
+The first scheduled `check_calendar` tick fires ~5 minutes after startup
+(not immediately). To iterate faster, temporarily lower `every_seconds`
+in `prompts/manager.toml` to its floor of `10`.
+
+### Manual test checklist
+
+- **C.1.** DM to the Manager bot → model replies in-character (no calendar call
+      required)
+- **C.2.** Group mention "@manager 我明天有什么事" → model calls
+      `calendar_list_events` and reports the results
+- **C.3.** Ask Manager to remind you of something → Secretary receives the
+      delegation envelope and sends a warm reminder message
+- **C.4.** Let the `check_calendar` pulse fire at least once; with an upcoming
+      event on the calendar, confirm Secretary posts a proactive reminder
+      in `MANAGER_PULSE_CHAT_ID`
