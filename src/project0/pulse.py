@@ -110,3 +110,56 @@ def load_pulse_entries(toml_path: Path) -> list[PulseEntry]:
         )
 
     return entries
+
+
+def build_pulse_envelope(entry: PulseEntry, *, target_agent: str) -> Envelope:
+    """Construct the Envelope the scheduler enqueues for one pulse tick."""
+    now = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    payload: dict[str, Any] = {"pulse_name": entry.name, **entry.payload}
+    return Envelope(
+        id=None,
+        ts=now,
+        parent_id=None,
+        source="pulse",
+        telegram_chat_id=entry.chat_id,
+        telegram_msg_id=None,
+        received_by_bot=None,
+        from_kind="system",
+        from_agent=None,
+        to_agent=target_agent,
+        body=entry.name,
+        mentions=[],
+        routing_reason="pulse",
+        payload=payload,
+    )
+
+
+async def run_pulse_loop(
+    *,
+    entry: PulseEntry,
+    target_agent: str,
+    orchestrator: "Orchestrator",
+) -> None:
+    """Infinite scheduler loop for one pulse entry.
+
+    Sleeps first, fires after. Exceptions from ``handle_pulse`` are logged
+    and swallowed so a single bad tick cannot kill future ticks. Cancels
+    propagate so the TaskGroup can shut us down cleanly.
+    """
+    log.info(
+        "pulse loop starting: name=%s target=%s every=%ss",
+        entry.name, target_agent, entry.every_seconds,
+    )
+    while True:
+        try:
+            await asyncio.sleep(entry.every_seconds)
+        except asyncio.CancelledError:
+            log.info("pulse loop cancelled: %s", entry.name)
+            raise
+        env = build_pulse_envelope(entry, target_agent=target_agent)
+        try:
+            await orchestrator.handle_pulse(env)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("pulse %s: handle_pulse raised; continuing loop", entry.name)
