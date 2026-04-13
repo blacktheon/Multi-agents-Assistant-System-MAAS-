@@ -96,15 +96,19 @@ async def test_anthropic_provider_passes_prompt_cache_control() -> None:
 
 @pytest.mark.asyncio
 async def test_anthropic_provider_raises_on_sdk_error() -> None:
+    import anthropic
+
     from project0.llm.provider import AnthropicProvider
 
     with patch("project0.llm.provider.AsyncAnthropic") as mock_cls:
         mock_client = MagicMock()
-        mock_client.messages.create = AsyncMock(side_effect=RuntimeError("boom"))
+        mock_client.messages.create = AsyncMock(
+            side_effect=anthropic.APIConnectionError(request=MagicMock())
+        )
         mock_cls.return_value = mock_client
 
         p = AnthropicProvider(api_key="sk-test", model="claude-sonnet-4-6")
-        with pytest.raises(LLMProviderError):
+        with pytest.raises(LLMProviderError, match="APIConnectionError"):
             await p.complete(system="S", messages=[Msg(role="user", content="x")])
 
 
