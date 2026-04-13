@@ -31,6 +31,7 @@ def _full_env() -> dict[str, str]:
         "ANTHROPIC_API_KEY": "sk-ant-xxx",
         "STORE_PATH": "data/store.db",
         "LOG_LEVEL": "INFO",
+        "USER_TIMEZONE": "UTC",
     }
 
 

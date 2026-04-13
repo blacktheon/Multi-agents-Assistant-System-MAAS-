@@ -8,7 +8,9 @@ required variable is missing or malformed.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from dotenv import load_dotenv
 
@@ -23,6 +25,10 @@ class Settings:
     anthropic_api_key: str
     store_path: str
     log_level: str
+    user_tz: ZoneInfo
+    google_calendar_id: str
+    google_token_path: Path
+    google_client_secrets_path: Path
 
 
 def _parse_int_csv(name: str, raw: str) -> frozenset[int]:
@@ -76,6 +82,22 @@ def load_settings() -> Settings:
     store_path = os.environ.get("STORE_PATH", "").strip() or "data/store.db"
     log_level = os.environ.get("LOG_LEVEL", "").strip() or "INFO"
 
+    user_tz_name = os.environ.get("USER_TIMEZONE", "").strip()
+    if not user_tz_name:
+        raise RuntimeError("USER_TIMEZONE is required but was empty or unset")
+    try:
+        user_tz = ZoneInfo(user_tz_name)
+    except ZoneInfoNotFoundError as e:
+        raise RuntimeError(f"USER_TIMEZONE {user_tz_name!r} is not a valid IANA timezone") from e
+
+    google_calendar_id = os.environ.get("GOOGLE_CALENDAR_ID", "").strip() or "primary"
+    google_token_path = Path(
+        os.environ.get("GOOGLE_TOKEN_PATH", "").strip() or "data/google_token.json"
+    )
+    google_client_secrets_path = Path(
+        os.environ.get("GOOGLE_CLIENT_SECRETS_PATH", "").strip() or "data/google_client_secrets.json"
+    )
+
     return Settings(
         bot_tokens=bot_tokens,
         allowed_chat_ids=allowed_chat_ids,
@@ -83,4 +105,8 @@ def load_settings() -> Settings:
         anthropic_api_key=anthropic_api_key,
         store_path=store_path,
         log_level=log_level,
+        user_tz=user_tz,
+        google_calendar_id=google_calendar_id,
+        google_token_path=google_token_path,
+        google_client_secrets_path=google_client_secrets_path,
     )
