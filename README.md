@@ -1,16 +1,19 @@
-# Project 0 — Multi-Agent Skeleton
+# Project 0 — Multi-Agent Assistant
 
-Single-process Python skeleton for Project 0. See the design spec at
-`docs/superpowers/specs/2026-04-13-multi-agent-skeleton-design.md` for the full
-architecture and scope rationale.
+Single-process Python implementation of Project 0. Design specs live under
+`docs/superpowers/specs/`:
+- `2026-04-13-multi-agent-skeleton-design.md` — foundational skeleton
+- `2026-04-13-secretary-design.md` — sub-project 6a (Secretary, first real LLM agent)
 
-## What this skeleton does
+## What runs today
 
-- Runs two Telegram bots (Manager + Intelligence) in one Python process.
-- Routes group-chat messages through an orchestrator that enforces
-  memory isolation, @mention focus tracking, and Manager-only delegation.
-- Persists every message envelope into a SQLite database.
-- **Does not** call any LLM. Agents are hardcoded stubs that echo back.
+**Skeleton:** Manager + Intelligence routing, memory isolation, @mention
+focus tracking, Manager-only delegation, SQLite envelope log.
+
+**Sub-project 6a (Secretary):** a real LLM-backed conversational companion.
+Speaks Chinese, passively observes group chats with a rich cooldown gate,
+replies to @mentions / DMs, and delivers Manager-directed reminders.
+Calls Claude via a thin provider interface with prompt caching.
 
 ## One-time setup
 
@@ -18,16 +21,17 @@ architecture and scope rationale.
 
 In Telegram, talk to `@BotFather`:
 
-1. `/newbot` → name it something like "Project0 Manager", username ending in `_bot`.
+1. `/newbot` → name it "Project0 Manager", username ending in `_bot`.
 2. `/newbot` → name it "Project0 Intelligence", username ending in `_bot`.
-3. For **each** bot, run `/setprivacy` → pick the bot → **Disable**. This is
+3. `/newbot` → name it "Project0 Secretary", username ending in `_bot`.
+4. For **each** bot, run `/setprivacy` → pick the bot → **Disable**. This is
    required so bots in groups see every message, not only @mentions.
-4. Save both tokens.
+5. Save all three tokens.
 
 ### 2. Create a Telegram group
 
 1. Create a new Telegram group.
-2. Add both bots as members.
+2. Add all three bots as members.
 3. Send any message. Look at the raw update (e.g., by enabling Telegram
    Desktop's "Copy Link" feature on a message, or by temporarily running
    the bot with `LOG_LEVEL=DEBUG`) to find the group's `chat_id`. For
@@ -46,9 +50,12 @@ Edit `.env`:
 ```
 TELEGRAM_BOT_TOKEN_MANAGER=<manager bot token>
 TELEGRAM_BOT_TOKEN_INTELLIGENCE=<intelligence bot token>
+TELEGRAM_BOT_TOKEN_SECRETARY=<secretary bot token>
 TELEGRAM_ALLOWED_CHAT_IDS=<your group chat_id, e.g. -100123456789>
 TELEGRAM_ALLOWED_USER_IDS=<your telegram user id>
-ANTHROPIC_API_KEY=sk-ant-...   # validated at startup, never called
+ANTHROPIC_API_KEY=sk-ant-...    # Secretary makes real calls via this
+LLM_PROVIDER=anthropic          # default; "fake" for FakeProvider
+LLM_MODEL=claude-sonnet-4-6     # override to change models
 STORE_PATH=data/store.db
 LOG_LEVEL=INFO
 ```
@@ -116,16 +123,37 @@ uv run ruff check src tests
 
 All three must be green for acceptance.
 
-## Scope reminder
+## Sub-project 6a — Secretary smoke test (acceptance criterion G)
 
-The skeleton is **deliberately unintelligent**. Agents do not understand
-your messages — the Manager's routing decision is a single substring
-check for `"news"`. If you find yourself thinking "the skeleton is almost
-smart," something is wrong; see section 1 of the design spec for why.
+Requires a real `ANTHROPIC_API_KEY` and all three bots in the allow-listed
+group. Secretary will speak Chinese in character.
 
-Real LLM-backed agents start in sub-project 6a (Secretary). Do not add
-LLM calls or natural-language routing to this skeleton — that belongs
-in the next sub-project's spec.
+- **G.1.** Send a few short messages (`hi`, `ok`, `sure`). Secretary stays
+  silent — the cooldown has not opened yet (needs ≥90s elapsed, ≥4 msgs,
+  ≥200 weighted chars since the last Secretary reply).
+- **G.2.** Once thresholds are crossed, Secretary either chimes in (one
+  Chinese line, in character) or stays silent (LLM returned `[skip]`).
+  Both outcomes are normal — repeat over a few minutes to see both.
+- **G.3.** Send `@secretary 你好`. Expect an immediate Chinese reply.
+- **G.4.** DM Secretary's bot directly with `你今天怎么样`. Expect a reply
+  with a more personal tone.
+- **G.5.** Run `uv run python scripts/inject_reminder.py "项目评审" "明天下午3点"`.
+  Expect a warm Chinese reminder printed to stdout. (Bypasses Telegram.)
+- **G.6.** Inspect the audit tree:
+  ```bash
+  sqlite3 data/store.db "SELECT id, parent_id, from_agent, to_agent, \
+    json_extract(envelope_json, '\$.routing_reason') AS rr \
+    FROM messages ORDER BY id DESC LIMIT 20;"
+  ```
+  For each group message there should be a `listener_observation` envelope
+  whose `parent_id` points at the original user envelope; any Secretary
+  reply links to the listener_observation, not the original.
+
+### Upgrading from skeleton to 6a
+
+The new `payload_json` column on `messages` is added via an idempotent
+`ALTER TABLE ADD COLUMN` on startup — no manual migration needed. Your
+existing `data/store.db` will be upgraded in place.
 
 ## Reset
 
