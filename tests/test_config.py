@@ -5,6 +5,22 @@ import pytest
 from project0.config import Settings, load_settings
 
 
+@pytest.fixture(autouse=True)
+def _no_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prevent the real ``.env`` file (if any) from leaking into these tests.
+
+    ``load_settings`` calls ``load_dotenv(override=False)``, which reads the
+    project's ``.env`` from disk. Once the user fills in a real ``.env`` for
+    the smoke test, that file starts populating env vars that the test
+    expected to be absent. Stubbing ``load_dotenv`` keeps the unit tests
+    hermetic.
+    """
+    monkeypatch.setattr(
+        "project0.config.load_dotenv",
+        lambda *args, **kwargs: None,
+    )
+
+
 def _full_env() -> dict[str, str]:
     return {
         "TELEGRAM_BOT_TOKEN_MANAGER": "m-token",

@@ -33,3 +33,19 @@ def test_parse_mentions_with_bot_suffix():
 
 def test_parse_mentions_trailing_punctuation():
     assert parse_mentions("@manager, please help.", KNOWN) == ["manager"]
+
+
+def test_parse_mentions_real_telegram_username():
+    # Real BotFather usernames have project prefixes that the short-form
+    # suffix-strip cannot handle. The username mapping resolves them.
+    u2a = {"maas_manager_bot": "manager", "maas_intelligence_bot": "intelligence"}
+    assert parse_mentions("@MAAS_manager_bot what's up", KNOWN, u2a) == ["manager"]
+    assert parse_mentions("@MAAS_Intelligence_bot news?", KNOWN, u2a) == ["intelligence"]
+
+
+def test_parse_mentions_username_mapping_plus_short_form():
+    # The orchestrator's internal handoff messages use short-form @intelligence,
+    # and real user messages use the full @MAAS_* form. Both must resolve.
+    u2a = {"maas_manager_bot": "manager"}
+    assert parse_mentions("→ forwarding to @intelligence", KNOWN, u2a) == ["intelligence"]
+    assert parse_mentions("@MAAS_manager_bot ping", KNOWN, u2a) == ["manager"]

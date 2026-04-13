@@ -16,7 +16,11 @@ from project0.agents.registry import AGENT_SPECS
 from project0.config import Settings, load_settings
 from project0.orchestrator import Orchestrator
 from project0.store import Store
-from project0.telegram_io import FakeBotSender, build_bot_applications
+from project0.telegram_io import (
+    FakeBotSender,
+    build_bot_applications,
+    fetch_bot_usernames,
+)
 
 log = logging.getLogger("project0")
 
@@ -71,16 +75,27 @@ async def _run(settings: Settings) -> None:
 
     log.info("starting bot pollers for: %s", ", ".join(apps))
 
+    # Phase 1: initialize and start every bot BEFORE any polling begins. This
+    # avoids network contention on startup and also populates app.bot.username
+    # so we can build the mention-routing mapping below.
+    for name, app in apps.items():
+        await app.initialize()
+        await app.start()
+        log.info("bot %s initialized", name)
+
+    # Now that each bot's real Telegram @username is known, wire it into the
+    # orchestrator so that @MAAS_manager_bot (or whatever BotFather chose)
+    # routes correctly. Falls back to the short-form @manager / @intelligence
+    # check inside parse_mentions, which is what agent handoff messages use.
+    orch.username_to_agent = fetch_bot_usernames(apps)
+    log.info("mention routing: %s", orch.username_to_agent)
+
+    # Phase 2: start all pollers concurrently.
     async with asyncio.TaskGroup() as tg:
         for name, app in apps.items():
-            # python-telegram-bot's Application.run_polling blocks and manages
-            # its own event loop. We want it as a coroutine task in our loop,
-            # so use initialize/start/updater.start_polling/idle pattern.
-            await app.initialize()
-            await app.start()
             assert app.updater is not None
             tg.create_task(app.updater.start_polling())
-            log.info("bot %s started", name)
+            log.info("bot %s polling", name)
 
         # Run forever until cancelled.
         stop_event = asyncio.Event()

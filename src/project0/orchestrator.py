@@ -15,7 +15,7 @@ beyond one-line event records. Those belong in telegram_io.py and main.py.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from project0.agents.registry import AGENT_REGISTRY
@@ -38,6 +38,7 @@ class Orchestrator:
     sender: BotSender
     allowed_chat_ids: frozenset[int]
     allowed_user_ids: frozenset[int]
+    username_to_agent: dict[str, str] = field(default_factory=dict)
 
     async def handle(self, update: InboundUpdate) -> None:
         # (1) Allow-list. Silent drop.
@@ -159,7 +160,9 @@ class Orchestrator:
             reason = "direct_dm"
         else:
             source = "telegram_group"
-            mentions = parse_mentions(u.text, AGENT_REGISTRY.keys())
+            mentions = parse_mentions(
+                u.text, AGENT_REGISTRY.keys(), self.username_to_agent
+            )
             if mentions:
                 to_agent = mentions[-1]  # last mention wins
                 reason = "mention"

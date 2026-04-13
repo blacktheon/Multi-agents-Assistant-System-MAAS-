@@ -76,6 +76,12 @@ def _classify_update(update: Update, received_by_bot: str) -> InboundUpdate | No
     msg = update.message
     if msg is None or msg.from_user is None or msg.chat is None:
         return None
+    # Drop bot-originated messages (including our own agents' outbound sends).
+    # With privacy mode disabled, bots see every message in a group, including
+    # other bots' messages. The allow-list would reject these by user_id, but
+    # filtering here is cheaper and more explicit.
+    if msg.from_user.is_bot:
+        return None
     text = msg.text if msg.text is not None else "[non-text]"
     chat_type = msg.chat.type  # 'private', 'group', 'supergroup', 'channel'
     if chat_type == "private":
@@ -92,6 +98,25 @@ def _classify_update(update: Update, received_by_bot: str) -> InboundUpdate | No
         user_id=msg.from_user.id,
         text=text,
     )
+
+
+def fetch_bot_usernames(
+    apps: dict[str, Application[Any, Any, Any, Any, Any, Any]],
+) -> dict[str, str]:
+    """Return a ``{telegram_username_lowercase: agent_name}`` mapping for the
+    given apps. Must be called AFTER each app has been ``initialize()``'d —
+    before that, ``app.bot.username`` is None.
+    """
+    result: dict[str, str] = {}
+    for agent_name, app in apps.items():
+        username = app.bot.username
+        if username is None:
+            raise RuntimeError(
+                f"app for agent {agent_name!r} has no username; "
+                "fetch_bot_usernames must be called after initialize()"
+            )
+        result[username.lower()] = agent_name
+    return result
 
 
 async def build_bot_applications(
