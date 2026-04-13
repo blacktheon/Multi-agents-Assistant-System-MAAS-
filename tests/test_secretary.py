@@ -464,6 +464,155 @@ async def test_secretary_listener_loads_transcript_context(tmp_path: Path) -> No
     assert "用户又说一句" in user_msg
 
 
+@pytest.mark.asyncio
+async def test_secretary_mention_path_always_replies(tmp_path: Path) -> None:
+    from project0.agents.secretary import Secretary
+    from project0.llm.provider import FakeProvider
+    from project0.store import Store
+
+    store = Store(tmp_path / "t.db")
+    store.init_schema()
+    llm = FakeProvider(responses=["嘿你来啦"])
+    sec = Secretary(
+        llm=llm,
+        memory=store.agent_memory("secretary"),
+        messages_store=store.messages(),
+        persona=_build_trivial_persona(),
+        config=_build_trivial_config(),
+    )
+    env = Envelope(
+        id=5,
+        ts="2026-04-13T12:00:00Z",
+        parent_id=None,
+        source="telegram_group",
+        telegram_chat_id=111,
+        telegram_msg_id=1,
+        received_by_bot="secretary",
+        from_kind="user",
+        from_agent=None,
+        to_agent="secretary",
+        body="@secretary 在吗",
+        mentions=["secretary"],
+        routing_reason="mention",
+    )
+    result = await sec.handle(env)
+    assert result is not None
+    assert result.reply_text == "嘿你来啦"
+    assert len(llm.calls) == 1
+    # Uses group_addressed_mode section.
+    assert "ADDRESSED" in llm.calls[0].system
+
+
+@pytest.mark.asyncio
+async def test_secretary_focus_path_uses_addressed_mode(tmp_path: Path) -> None:
+    from project0.agents.secretary import Secretary
+    from project0.llm.provider import FakeProvider
+    from project0.store import Store
+
+    store = Store(tmp_path / "t.db")
+    store.init_schema()
+    llm = FakeProvider(responses=["继续聊"])
+    sec = Secretary(
+        llm=llm,
+        memory=store.agent_memory("secretary"),
+        messages_store=store.messages(),
+        persona=_build_trivial_persona(),
+        config=_build_trivial_config(),
+    )
+    env = Envelope(
+        id=6,
+        ts="2026-04-13T12:00:00Z",
+        parent_id=None,
+        source="telegram_group",
+        telegram_chat_id=222,
+        telegram_msg_id=1,
+        received_by_bot="secretary",
+        from_kind="user",
+        from_agent=None,
+        to_agent="secretary",
+        body="跟上",
+        routing_reason="focus",
+    )
+    result = await sec.handle(env)
+    assert result is not None
+    assert result.reply_text == "继续聊"
+    assert "ADDRESSED" in llm.calls[0].system
+
+
+@pytest.mark.asyncio
+async def test_secretary_dm_path_uses_dm_mode(tmp_path: Path) -> None:
+    from project0.agents.secretary import Secretary
+    from project0.llm.provider import FakeProvider
+    from project0.store import Store
+
+    store = Store(tmp_path / "t.db")
+    store.init_schema()
+    llm = FakeProvider(responses=["私聊里我更大胆"])
+    sec = Secretary(
+        llm=llm,
+        memory=store.agent_memory("secretary"),
+        messages_store=store.messages(),
+        persona=_build_trivial_persona(),
+        config=_build_trivial_config(),
+    )
+    env = Envelope(
+        id=7,
+        ts="2026-04-13T12:00:00Z",
+        parent_id=None,
+        source="telegram_dm",
+        telegram_chat_id=333,
+        telegram_msg_id=1,
+        received_by_bot="secretary",
+        from_kind="user",
+        from_agent=None,
+        to_agent="secretary",
+        body="你今天怎么样",
+        routing_reason="direct_dm",
+    )
+    result = await sec.handle(env)
+    assert result is not None
+    assert result.reply_text == "私聊里我更大胆"
+    assert "DM" in llm.calls[0].system
+
+
+@pytest.mark.asyncio
+async def test_secretary_dm_cooldown_namespace_is_separate_from_group(tmp_path: Path) -> None:
+    """Activity in a DM should not affect group listener cooldowns and
+    vice versa, because cooldown keys are per-chat_id."""
+    from project0.agents.secretary import Secretary
+    from project0.llm.provider import FakeProvider
+    from project0.store import Store
+
+    store = Store(tmp_path / "t.db")
+    store.init_schema()
+    mem = store.agent_memory("secretary")
+
+    # Prime the GROUP cooldown as if it just fired.
+    now_iso = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    mem.set("last_reply_at_888", now_iso)
+    mem.set("msgs_since_reply_888", 0)
+    mem.set("chars_since_reply_888", 0)
+
+    llm = FakeProvider(responses=["DM reply", "DM reply2"])
+    sec = Secretary(
+        llm=llm, memory=mem, messages_store=store.messages(),
+        persona=_build_trivial_persona(), config=_build_trivial_config(),
+    )
+
+    # A DM to chat 999 should not see the group cooldown state.
+    dm = Envelope(
+        id=None, ts="2026-04-13T12:00:00Z", parent_id=None,
+        source="telegram_dm", telegram_chat_id=999, telegram_msg_id=1,
+        received_by_bot="secretary", from_kind="user", from_agent=None,
+        to_agent="secretary", body="hi", routing_reason="direct_dm",
+    )
+    r = await sec.handle(dm)
+    assert r is not None and r.reply_text == "DM reply"
+    # Group cooldown for 888 is untouched.
+    assert mem.get("msgs_since_reply_888") == 0
+    assert mem.get("last_reply_at_888") == now_iso
+
+
 def _build_trivial_config():
     from project0.agents.secretary import SecretaryConfig
     return SecretaryConfig(

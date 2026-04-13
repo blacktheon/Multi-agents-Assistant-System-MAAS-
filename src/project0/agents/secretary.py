@@ -340,10 +340,53 @@ class Secretary:
         return AgentResult(reply_text=reply, delegate_to=None, handoff_text=None)
 
     async def _handle_addressed(self, env: Envelope) -> AgentResult | None:
-        return None
+        """Group path triggered by @mention or sticky focus. No cooldown.
+        Uses the group_addressed_mode persona section."""
+        return await self._addressed_llm_call(
+            env=env,
+            mode_section=self._persona.group_addressed_mode,
+            max_tokens=self._config.max_tokens_reply,
+            preface="对话记录(你刚被点名):",
+        )
 
     async def _handle_dm(self, env: Envelope) -> AgentResult | None:
-        return None
+        """DM path. Always replies, separate cooldown namespace (per chat_id)."""
+        return await self._addressed_llm_call(
+            env=env,
+            mode_section=self._persona.dm_mode,
+            max_tokens=self._config.max_tokens_reply,
+            preface="私聊记录:",
+        )
+
+    async def _addressed_llm_call(
+        self,
+        *,
+        env: Envelope,
+        mode_section: str,
+        max_tokens: int,
+        preface: str,
+    ) -> AgentResult | None:
+        chat_id = env.telegram_chat_id
+        transcript = self._load_transcript(chat_id) if chat_id is not None else ""
+        system = self._persona.core + "\n\n" + mode_section
+        user_msg = f"{preface}\n{transcript}\nuser: {env.body}"
+        try:
+            reply = await self._llm.complete(
+                system=system,
+                messages=[Msg(role="user", content=user_msg)],
+                max_tokens=max_tokens,
+            )
+        except LLMProviderError as e:
+            log.warning("secretary addressed LLM call failed: %s", e)
+            return None
+
+        # Reset group cooldown when Secretary speaks directly so the listener
+        # path doesn't immediately fire again on the next message. Done only
+        # for group chats (DMs have separate namespaces per chat_id anyway).
+        if chat_id is not None and env.source == "telegram_group":
+            self._reset_cooldown_after_reply(chat_id)
+
+        return AgentResult(reply_text=reply, delegate_to=None, handoff_text=None)
 
     async def _handle_reminder(self, env: Envelope) -> AgentResult | None:
         return None
