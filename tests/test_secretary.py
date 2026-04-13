@@ -122,3 +122,41 @@ body
     )
     with pytest.raises(ValueError, match="malformed section header"):
         load_persona(md)
+
+
+def test_weighted_len_counts_cjk_as_three_and_ascii_as_one() -> None:
+    from project0.agents.secretary import weighted_len
+    assert weighted_len("") == 0
+    assert weighted_len("hello") == 5
+    assert weighted_len("你好") == 6  # 2 CJK chars × 3
+    assert weighted_len("hi 你") == 2 + 1 + 3
+    assert weighted_len("   ") == 3  # whitespace is ASCII
+
+
+def test_is_skip_sentinel_exact_match() -> None:
+    from project0.agents.secretary import is_skip_sentinel
+    sentinels = ["[skip]", "[跳过]", "【skip】"]
+    assert is_skip_sentinel("[skip]", sentinels)
+    assert is_skip_sentinel("  [skip]  ", sentinels)
+    assert is_skip_sentinel("[SKIP]", sentinels)  # case-insensitive
+    assert is_skip_sentinel("[跳过]", sentinels)
+    assert is_skip_sentinel("【skip】", sentinels)
+
+
+def test_is_skip_sentinel_starts_with_match() -> None:
+    """The model may emit '[skip] nothing clicks here' — still a skip."""
+    from project0.agents.secretary import is_skip_sentinel
+    sentinels = ["[skip]"]
+    assert is_skip_sentinel("[skip] this beat is already covered", sentinels)
+    assert is_skip_sentinel("[skip].", sentinels)
+    assert is_skip_sentinel("[skip]\nreasoning", sentinels)
+    # But not when the sentinel is just part of a longer word.
+    assert not is_skip_sentinel("[skipthis]", sentinels)
+
+
+def test_is_skip_sentinel_negative_cases() -> None:
+    from project0.agents.secretary import is_skip_sentinel
+    sentinels = ["[skip]"]
+    assert not is_skip_sentinel("嘿你今天怎么这么努力", sentinels)
+    assert not is_skip_sentinel("", sentinels)
+    assert not is_skip_sentinel("no skip here", sentinels)

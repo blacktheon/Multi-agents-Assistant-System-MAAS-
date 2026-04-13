@@ -127,3 +127,49 @@ def load_config(path: Path) -> SecretaryConfig:
         max_tokens_listener=int(_require("llm", "max_tokens_listener")),
         skip_sentinels=list(_require("skip_sentinels", "patterns")),
     )
+
+
+def weighted_len(s: str) -> int:
+    """Count characters with CJK characters weighted 3x. Chinese carries
+    more meaning per character than English, so a 60-char Chinese message
+    and a 180-char English message represent roughly the same conversational
+    density. The cooldown L_min threshold uses this weighted count."""
+    total = 0
+    for c in s:
+        cp = ord(c)
+        # Common CJK Unified Ideographs, extensions, and compatibility forms.
+        if (
+            0x4E00 <= cp <= 0x9FFF      # CJK Unified Ideographs
+            or 0x3400 <= cp <= 0x4DBF   # Extension A
+            or 0x20000 <= cp <= 0x2A6DF # Extension B
+            or 0xF900 <= cp <= 0xFAFF   # Compatibility Ideographs
+            or 0x3040 <= cp <= 0x30FF   # Hiragana + Katakana (similar density)
+        ):
+            total += 3
+        else:
+            total += 1
+    return total
+
+
+def is_skip_sentinel(text: str, sentinels: list[str]) -> bool:
+    """Return True if the model's response means 'skip this turn'. Matches
+    both exact-equal (after strip+lower) and starts-with-then-non-alnum to
+    catch cases like '[skip] nothing really fits here'."""
+    if not text or not sentinels:
+        return False
+    t = text.strip().lower()
+    if not t:
+        return False
+    for raw in sentinels:
+        s = raw.strip().lower()
+        if not s:
+            continue
+        if t == s:
+            return True
+        if t.startswith(s):
+            # Next character must not be alphanumeric (avoid matching
+            # '[skipthis]' against '[skip]').
+            tail = t[len(s):]
+            if not tail or not tail[0].isalnum():
+                return True
+    return False
