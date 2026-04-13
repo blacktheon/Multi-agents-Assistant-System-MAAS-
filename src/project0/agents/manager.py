@@ -20,7 +20,8 @@ from typing import TYPE_CHECKING, Any
 
 from project0.calendar.errors import GoogleCalendarError
 from project0.envelope import AgentResult, Envelope
-from project0.llm.tools import ToolCall, ToolSpec
+from project0.llm.provider import LLMProviderError, Msg
+from project0.llm.tools import AssistantToolUseMsg, ToolCall, ToolResultMsg, ToolSpec, ToolUseResult
 
 if TYPE_CHECKING:
     from project0.calendar.client import GoogleCalendar
@@ -384,6 +385,137 @@ class Manager:
             return "delegated", False
 
         return f"unknown tool: {name}", True
+
+    async def handle(self, env: Envelope) -> AgentResult | None:
+        reason = env.routing_reason
+        if reason == "direct_dm":
+            return await self._run_chat_turn(env, self._persona.dm_mode)
+        if reason in ("mention", "focus", "default_manager"):
+            return await self._run_chat_turn(env, self._persona.group_addressed_mode)
+        if reason == "pulse":
+            return await self._run_pulse_turn(env)
+        log.debug("manager: ignoring routing_reason=%s", reason)
+        return None
+
+    def _build_system_prompt(self, mode_section: str) -> str:
+        return (
+            self._persona.core
+            + "\n\n" + mode_section
+            + "\n\n" + self._persona.tool_use_guide
+        )
+
+    def _load_transcript(self, chat_id: int | None) -> str:
+        if chat_id is None or self._messages is None:
+            return ""
+        envs = self._messages.recent_for_chat(
+            chat_id=chat_id, limit=self._config.transcript_window
+        )
+        lines: list[str] = []
+        for e in envs:
+            if e.from_kind == "user":
+                lines.append(f"user: {e.body}")
+            elif e.from_kind == "agent":
+                speaker = e.from_agent or "unknown"
+                lines.append(f"{speaker}: {e.body}")
+        return "\n".join(lines)
+
+    async def _run_chat_turn(
+        self, env: Envelope, mode_section: str
+    ) -> AgentResult | None:
+        system = self._build_system_prompt(mode_section)
+        transcript = self._load_transcript(env.telegram_chat_id)
+        initial_user_text = (
+            f"对话记录:\n{transcript}\n\n最新用户消息: {env.body}"
+            if transcript else f"最新用户消息: {env.body}"
+        )
+        return await self._agentic_loop(
+            system=system,
+            initial_user_text=initial_user_text,
+            max_tokens=self._config.max_tokens_reply,
+            is_pulse=False,
+        )
+
+    async def _run_pulse_turn(self, env: Envelope) -> AgentResult | None:
+        system = self._build_system_prompt(self._persona.pulse_mode)
+        payload = env.payload or {}
+        pulse_name = payload.get("pulse_name", env.body)
+        payload_json = json.dumps(payload, ensure_ascii=False)
+        transcript = self._load_transcript(env.telegram_chat_id)
+        initial_user_text = (
+            f"定时脉冲被触发: {pulse_name}\n"
+            f"payload: {payload_json}"
+        )
+        if transcript:
+            initial_user_text += f"\n\n最近对话:\n{transcript}"
+        return await self._agentic_loop(
+            system=system,
+            initial_user_text=initial_user_text,
+            max_tokens=self._config.max_tokens_reply,
+            is_pulse=True,
+        )
+
+    async def _agentic_loop(
+        self,
+        *,
+        system: str,
+        initial_user_text: str,
+        max_tokens: int,
+        is_pulse: bool,
+    ) -> AgentResult | None:
+        assert self._llm is not None
+        turn_state = TurnState()
+        messages: list = [Msg(role="user", content=initial_user_text)]
+
+        for _iter in range(self._config.max_tool_iterations):
+            try:
+                result = await self._llm.complete_with_tools(
+                    system=system,
+                    messages=messages,
+                    tools=self._tool_specs,
+                    max_tokens=max_tokens,
+                )
+            except LLMProviderError as e:
+                log.warning("manager LLM call failed: %s", e)
+                return None
+
+            if result.kind == "text":
+                if turn_state.delegation_target is not None:
+                    # Delegation queued: suppress the trailing text, return as delegation.
+                    return AgentResult(
+                        reply_text=None,
+                        delegate_to=turn_state.delegation_target,
+                        handoff_text=turn_state.delegation_handoff,
+                        delegation_payload=turn_state.delegation_payload,
+                    )
+                final_text = result.text or ""
+                if is_pulse and not final_text.strip():
+                    return None
+                return AgentResult(
+                    reply_text=final_text,
+                    delegate_to=None,
+                    handoff_text=None,
+                )
+
+            # tool_use branch
+            messages.append(
+                AssistantToolUseMsg(
+                    tool_calls=list(result.tool_calls),
+                    text=result.text,
+                )
+            )
+            for call in result.tool_calls:
+                content_str, is_err = await self._dispatch_tool(call, turn_state)
+                messages.append(
+                    ToolResultMsg(
+                        tool_use_id=call.id,
+                        content=content_str,
+                        is_error=is_err,
+                    )
+                )
+
+        raise LLMProviderError(
+            f"manager exceeded max_tool_iterations={self._config.max_tool_iterations}"
+        )
 
 
 # --- placeholder stub (removed in Task 14) -----------------------------------
