@@ -211,6 +211,22 @@ def test_list_events_rejects_naive_datetime() -> None:
         asyncio.run(run())
 
 
+def test_get_event_returns_translated_event() -> None:
+    # The get-response shape is a single event dict, not the wrapped
+    # list response. Our list_single_dateTime fixture's first item is
+    # exactly that shape.
+    body = json.dumps(load_fixture("list_single_dateTime.json")["items"][0]).encode("utf-8")
+    client = build_test_client([({"status": "200"}, body)])
+
+    async def run() -> CalendarEvent:
+        return await client.get_event("abc123def456")
+
+    event = asyncio.run(run())
+    assert event.id == "abc123def456"
+    assert event.summary == "Coffee with prof"
+    assert event.all_day is False
+
+
 def test_auth_writes_token_chmod_600(tmp_path: Path) -> None:
     # We call the private helper directly: the full flow requires a real
     # Google consent dance and cannot be unit-tested. The chmod step is

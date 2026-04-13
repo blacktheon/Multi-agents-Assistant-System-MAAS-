@@ -94,6 +94,28 @@ class GoogleCalendar:
         return [raw_event_to_model(item, self._user_tz) for item in items]
 
 
+    async def get_event(self, event_id: str) -> CalendarEvent:
+        return await asyncio.to_thread(self._sync_get_event, event_id)
+
+    def _sync_get_event(self, event_id: str) -> CalendarEvent:
+        try:
+            raw: dict[str, Any] = (
+                self._service.events().get(
+                    calendarId=self._calendar_id,
+                    eventId=event_id,
+                ).execute()
+            )
+        except HttpError as e:
+            raise GoogleCalendarError(
+                f"get_event({event_id!r}) failed: HTTP {e.resp.status}"
+            ) from e
+        except Exception as e:  # noqa: BLE001
+            raise GoogleCalendarError(
+                f"get_event({event_id!r}) failed: {e}"
+            ) from e
+        return raw_event_to_model(raw, self._user_tz)
+
+
 def _require_aware(dt: datetime, field_name: str) -> None:
     """Reject naive datetimes at the client boundary."""
     if dt.tzinfo is None:
