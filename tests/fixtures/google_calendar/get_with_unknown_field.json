@@ -1,0 +1,19 @@
+{
+  "kind": "calendar#event",
+  "etag": "\"3400000000000002\"",
+  "id": "unknownfield001",
+  "status": "confirmed",
+  "htmlLink": "https://www.google.com/calendar/event?eid=unknownfield001",
+  "created": "2026-04-10T09:00:00.000Z",
+  "updated": "2026-04-10T09:00:00.000Z",
+  "summary": "Event with an unknown future field",
+  "creator": {"email": "user@example.com", "self": true},
+  "organizer": {"email": "user@example.com", "self": true},
+  "start": {"dateTime": "2026-04-20T10:00:00+08:00", "timeZone": "Asia/Shanghai"},
+  "end": {"dateTime": "2026-04-20T11:00:00+08:00", "timeZone": "Asia/Shanghai"},
+  "iCalUID": "unknownfield001@google.com",
+  "sequence": 0,
+  "reminders": {"useDefault": true},
+  "eventType": "default",
+  "futureFieldFromGoogle": {"someValue": 42}
+}

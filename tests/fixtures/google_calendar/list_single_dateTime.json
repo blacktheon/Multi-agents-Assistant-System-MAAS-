@@ -1,0 +1,30 @@
+{
+  "kind": "calendar#events",
+  "etag": "\"p33a9ecb3f6mb8\"",
+  "summary": "user@example.com",
+  "updated": "2026-04-14T10:00:00.000Z",
+  "timeZone": "Asia/Shanghai",
+  "accessRole": "owner",
+  "items": [
+    {
+      "kind": "calendar#event",
+      "etag": "\"3400000000000000\"",
+      "id": "abc123def456",
+      "status": "confirmed",
+      "htmlLink": "https://www.google.com/calendar/event?eid=abc123",
+      "created": "2026-04-10T09:00:00.000Z",
+      "updated": "2026-04-10T09:00:00.000Z",
+      "summary": "Coffee with prof",
+      "description": "Discuss the April review schedule",
+      "location": "Starbucks Nanjing West Rd",
+      "creator": {"email": "user@example.com", "self": true},
+      "organizer": {"email": "user@example.com", "self": true},
+      "start": {"dateTime": "2026-04-15T14:00:00+08:00", "timeZone": "Asia/Shanghai"},
+      "end": {"dateTime": "2026-04-15T15:00:00+08:00", "timeZone": "Asia/Shanghai"},
+      "iCalUID": "abc123def456@google.com",
+      "sequence": 0,
+      "reminders": {"useDefault": true},
+      "eventType": "default"
+    }
+  ]
+}
