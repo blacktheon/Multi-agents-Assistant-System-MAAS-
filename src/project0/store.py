@@ -271,6 +271,26 @@ class MessagesStore:
             result.append(env)
         return result
 
+    def recent_for_chat(self, *, chat_id: int, limit: int) -> list[Envelope]:
+        """Return the most recent envelopes for a single Telegram chat,
+        oldest-first. Used by agents loading transcript context."""
+        rows = self._conn.execute(
+            """
+            SELECT id, envelope_json FROM messages
+            WHERE telegram_chat_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (chat_id, limit),
+        ).fetchall()
+        result: list[Envelope] = []
+        for r in rows:
+            env = Envelope.from_json(r["envelope_json"])
+            env.id = r["id"]
+            result.append(env)
+        result.reverse()
+        return result
+
     def has_recent_user_text_in_group(
         self, *, chat_id: int, body: str, within_seconds: int
     ) -> bool:

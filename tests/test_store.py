@@ -362,3 +362,62 @@ def test_messages_insert_null_payload_works(tmp_path: Path) -> None:
     persisted = store.messages().insert(env)
     assert persisted is not None
     assert persisted.payload is None
+
+
+def test_messages_recent_for_chat_returns_in_chronological_order(tmp_path: Path) -> None:
+    from project0.envelope import Envelope
+    from project0.store import Store
+
+    store = Store(tmp_path / "t.db")
+    store.init_schema()
+
+    def env(msg_id: int, ts: str, body: str, chat_id: int = 500) -> Envelope:
+        return Envelope(
+            id=None,
+            ts=ts,
+            parent_id=None,
+            source="telegram_group",
+            telegram_chat_id=chat_id,
+            telegram_msg_id=msg_id,
+            received_by_bot="manager",
+            from_kind="user",
+            from_agent=None,
+            to_agent="manager",
+            body=body,
+            routing_reason="default_manager",
+        )
+
+    store.messages().insert(env(1, "2026-04-13T12:00:00Z", "first"))
+    store.messages().insert(env(2, "2026-04-13T12:00:05Z", "second"))
+    store.messages().insert(env(3, "2026-04-13T12:00:10Z", "third"))
+    # Another chat to verify isolation.
+    store.messages().insert(env(10, "2026-04-13T12:00:07Z", "other-chat", chat_id=999))
+
+    got = store.messages().recent_for_chat(chat_id=500, limit=10)
+    assert [e.body for e in got] == ["first", "second", "third"]
+
+
+def test_messages_recent_for_chat_respects_limit(tmp_path: Path) -> None:
+    from project0.envelope import Envelope
+    from project0.store import Store
+
+    store = Store(tmp_path / "t.db")
+    store.init_schema()
+    for i in range(5):
+        store.messages().insert(Envelope(
+            id=None,
+            ts=f"2026-04-13T12:00:{i:02d}Z",
+            parent_id=None,
+            source="telegram_group",
+            telegram_chat_id=700,
+            telegram_msg_id=i + 1,
+            received_by_bot="manager",
+            from_kind="user",
+            from_agent=None,
+            to_agent="manager",
+            body=f"msg-{i}",
+            routing_reason="default_manager",
+        ))
+
+    got = store.messages().recent_for_chat(chat_id=700, limit=3)
+    assert [e.body for e in got] == ["msg-2", "msg-3", "msg-4"]
