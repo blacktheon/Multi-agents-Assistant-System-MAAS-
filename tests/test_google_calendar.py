@@ -84,3 +84,41 @@ def test_list_events_source_timezone_conversion() -> None:
     assert event.start.isoformat() == "2026-04-16T00:00:00+08:00"
     assert event.end.isoformat() == "2026-04-16T00:30:00+08:00"
     assert event.all_day is False
+
+
+def test_unknown_field_logs_warning_once(caplog: pytest.LogCaptureFixture) -> None:
+    raw = load_fixture("get_with_unknown_field.json")
+
+    caplog.set_level("WARNING", logger="project0.calendar.model")
+
+    raw_event_to_model(raw, BEIJING)
+    first_pass_warnings = [
+        rec.message for rec in caplog.records
+        if "futureFieldFromGoogle" in rec.message
+    ]
+    assert len(first_pass_warnings) == 1
+    assert first_pass_warnings[0] == "unknown GCal event field: futureFieldFromGoogle"
+
+    caplog.clear()
+    raw_event_to_model(raw, BEIJING)
+    second_pass_warnings = [
+        rec.message for rec in caplog.records
+        if "futureFieldFromGoogle" in rec.message
+    ]
+    assert second_pass_warnings == []  # rate-limited: no second warning
+
+
+def test_unknown_field_does_not_warn_for_ignorable_keys() -> None:
+    # "reminders" is in the ignorable set — no warning should fire.
+    raw: dict[str, Any] = {
+        "id": "quiet001",
+        "summary": "Quiet event",
+        "htmlLink": "https://example.invalid/quiet001",
+        "start": {"dateTime": "2026-04-20T10:00:00+08:00", "timeZone": "Asia/Shanghai"},
+        "end": {"dateTime": "2026-04-20T11:00:00+08:00", "timeZone": "Asia/Shanghai"},
+        "reminders": {"useDefault": True},
+    }
+
+    assert model_mod._warned_unknown_keys == set()
+    raw_event_to_model(raw, BEIJING)
+    assert model_mod._warned_unknown_keys == set()
