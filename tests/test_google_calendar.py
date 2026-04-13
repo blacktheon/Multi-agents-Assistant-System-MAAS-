@@ -36,16 +36,18 @@ def test_list_events_dateTime_translates_to_user_tz() -> None:
 
     event = raw_event_to_model(raw, BEIJING)
 
-    assert event.id == "abc123def456"
-    assert event.summary == "Coffee with prof"
-    assert event.description == "Discuss the April review schedule"
-    assert event.location == "Starbucks Nanjing West Rd"
-    assert event.html_link == "https://www.google.com/calendar/event?eid=abc123"
+    assert event.id == "be78e890dbc149e2a6beffb1d8a933db_20260413T233000Z"
+    assert event.summary == "起床"
+    # The real captured event has no description or location — defensive
+    # reads return None rather than raising KeyError.
+    assert event.description is None
+    assert event.location is None
+    assert event.html_link.startswith("https://www.google.com/calendar/event?eid=")
     assert event.all_day is False
     assert event.start.tzinfo is not None
     assert event.end.tzinfo is not None
-    assert event.start.isoformat() == "2026-04-15T14:00:00+08:00"
-    assert event.end.isoformat() == "2026-04-15T15:00:00+08:00"
+    assert event.start.isoformat() == "2026-04-14T07:30:00+08:00"
+    assert event.end.isoformat() == "2026-04-14T08:00:00+08:00"
 
 
 def test_list_events_empty_result_returns_no_events() -> None:
@@ -63,12 +65,12 @@ def test_list_events_all_day_normalization() -> None:
     event = raw_event_to_model(raw, BEIJING)
 
     assert event.all_day is True
-    assert event.summary == "Tomb Sweeping Day"
+    assert event.summary == "Project-0"
     assert event.start.tzinfo is not None
     assert event.end.tzinfo is not None
     # Midnight Beijing, not UTC, not naive.
-    assert event.start.isoformat() == "2026-04-05T00:00:00+08:00"
-    assert event.end.isoformat() == "2026-04-06T00:00:00+08:00"
+    assert event.start.isoformat() == "2026-04-14T00:00:00+08:00"
+    assert event.end.isoformat() == "2026-04-15T00:00:00+08:00"
 
 
 def test_list_events_source_timezone_conversion() -> None:
@@ -195,8 +197,8 @@ def test_list_events_returns_translated_events() -> None:
     events = asyncio.run(run())
 
     assert len(events) == 1
-    assert events[0].id == "abc123def456"
-    assert events[0].summary == "Coffee with prof"
+    assert events[0].id == "be78e890dbc149e2a6beffb1d8a933db_20260413T233000Z"
+    assert events[0].summary == "起床"
 
 
 def test_list_events_rejects_naive_datetime() -> None:
@@ -219,11 +221,11 @@ def test_get_event_returns_translated_event() -> None:
     client = build_test_client([({"status": "200"}, body)])
 
     async def run() -> CalendarEvent:
-        return await client.get_event("abc123def456")
+        return await client.get_event("be78e890dbc149e2a6beffb1d8a933db_20260413T233000Z")
 
     event = asyncio.run(run())
-    assert event.id == "abc123def456"
-    assert event.summary == "Coffee with prof"
+    assert event.id == "be78e890dbc149e2a6beffb1d8a933db_20260413T233000Z"
+    assert event.summary == "起床"
     assert event.all_day is False
 
 
