@@ -324,3 +324,16 @@ def test_auth_writes_token_chmod_600(tmp_path: Path) -> None:
     # On POSIX, check the file mode is exactly 0o600.
     mode = token_path.stat().st_mode & 0o777
     assert mode == 0o600, f"expected mode 0o600, got {oct(mode)}"
+
+
+def test_http_error_translates_to_GoogleCalendarError() -> None:
+    from project0.calendar.errors import GoogleCalendarError
+
+    body = json.dumps(load_fixture("error_404.json")).encode("utf-8")
+    client = build_test_client([({"status": "404"}, body)])
+
+    async def run() -> CalendarEvent:
+        return await client.get_event("definitely-not-a-real-id-zzz")
+
+    with pytest.raises(GoogleCalendarError, match="404"):
+        asyncio.run(run())
