@@ -456,12 +456,33 @@ async def test_secretary_listener_loads_transcript_context(tmp_path: Path) -> No
         persona=_build_trivial_persona(),
         config=_build_trivial_config(),
     )
+    # Mirror orchestrator behavior: the inbound user envelope is inserted
+    # into the messages table BEFORE Secretary is dispatched, so the
+    # transcript already contains it as its last line.
+    store.messages().insert(Envelope(
+        id=None,
+        ts="2026-04-13T12:00:99Z",
+        parent_id=None,
+        source="telegram_group",
+        telegram_chat_id=333,
+        telegram_msg_id=99,
+        received_by_bot="manager",
+        from_kind="user",
+        from_agent=None,
+        to_agent="manager",
+        body="newest",
+        routing_reason="default_manager",
+    ))
     await sec.handle(_listener_env(chat_id=333, body="newest"))
     assert len(llm.calls) == 1
     user_msg = llm.calls[0].messages[0].content
     assert "用户说的一段话" in user_msg
     assert "manager stub answer" in user_msg
     assert "用户又说一句" in user_msg
+    # Regression guard: the latest user line must appear exactly once, not
+    # twice. (Pre-fix, secretary.py duplicated `user: <body>` at the end of
+    # the prompt even though it was already the last transcript line.)
+    assert user_msg.count("newest") == 1
 
 
 @pytest.mark.asyncio
@@ -501,6 +522,51 @@ async def test_secretary_mention_path_always_replies(tmp_path: Path) -> None:
     assert len(llm.calls) == 1
     # Uses group_addressed_mode section.
     assert "ADDRESSED" in llm.calls[0].system
+
+
+@pytest.mark.asyncio
+async def test_secretary_addressed_path_does_not_duplicate_user_line(tmp_path: Path) -> None:
+    """Regression: the latest user line should appear exactly once in the
+    LLM prompt. The transcript (via recent_for_chat) already contains it."""
+    from project0.agents.secretary import Secretary
+    from project0.llm.provider import FakeProvider
+    from project0.store import Store
+
+    store = Store(tmp_path / "t.db")
+    store.init_schema()
+
+    # Pre-seed the chat with one prior user line so the transcript is non-empty.
+    store.messages().insert(Envelope(
+        id=None, ts="2026-04-13T11:59:00Z", parent_id=None,
+        source="telegram_group", telegram_chat_id=111, telegram_msg_id=1,
+        received_by_bot="secretary", from_kind="user", from_agent=None,
+        to_agent="manager", body="earlier line", routing_reason="default_manager",
+    ))
+    # The current @mention envelope — this is what the orchestrator would
+    # insert and then dispatch to Secretary.
+    current = Envelope(
+        id=None, ts="2026-04-13T12:00:00Z", parent_id=None,
+        source="telegram_group", telegram_chat_id=111, telegram_msg_id=2,
+        received_by_bot="secretary", from_kind="user", from_agent=None,
+        to_agent="secretary",
+        body="unique-marker-xyz",  # unique substring we'll count
+        mentions=["secretary"], routing_reason="mention",
+    )
+    persisted = store.messages().insert(current)
+    assert persisted is not None
+
+    llm = FakeProvider(responses=["ok"])
+    sec = Secretary(
+        llm=llm,
+        memory=store.agent_memory("secretary"),
+        messages_store=store.messages(),
+        persona=_build_trivial_persona(),
+        config=_build_trivial_config(),
+    )
+    await sec.handle(persisted)
+    user_content = llm.calls[0].messages[0].content
+    # Regression guard: the unique marker must appear EXACTLY once.
+    assert user_content.count("unique-marker-xyz") == 1, user_content
 
 
 @pytest.mark.asyncio

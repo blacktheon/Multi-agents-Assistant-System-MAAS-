@@ -20,7 +20,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
-import anthropic
 from anthropic import AsyncAnthropic
 from anthropic.types import MessageParam, TextBlockParam
 
@@ -123,7 +122,7 @@ class AnthropicProvider:
                 system=system_block,
                 messages=sdk_messages,
             )
-        except (anthropic.APIError, TimeoutError) as e:
+        except Exception as e:
             log.exception("anthropic call failed")
             raise LLMProviderError(f"anthropic {type(e).__name__}") from e
 

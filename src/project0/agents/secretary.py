@@ -317,11 +317,7 @@ class Secretary:
         assert chat_id is not None
         transcript = self._load_transcript(chat_id)
         system = self._persona.core + "\n\n" + self._persona.listener_mode
-        user_msg = (
-            "对话记录(最后一条是用户刚发的):\n"
-            f"{transcript}\n"
-            f"user: {env.body}"
-        )
+        user_msg = f"对话记录(最后一条是用户刚发的):\n{transcript}"
         try:
             reply = await self._llm.complete(
                 system=system,
@@ -369,7 +365,7 @@ class Secretary:
         chat_id = env.telegram_chat_id
         transcript = self._load_transcript(chat_id) if chat_id is not None else ""
         system = self._persona.core + "\n\n" + mode_section
-        user_msg = f"{preface}\n{transcript}\nuser: {env.body}"
+        user_msg = f"{preface}\n{transcript}"
         try:
             reply = await self._llm.complete(
                 system=system,

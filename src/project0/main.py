@@ -40,8 +40,12 @@ def _ensure_store_dir(store_path: str) -> None:
 
 def _build_llm_provider(settings: Settings) -> LLMProvider:
     """Construct the LLM provider based on LLM_PROVIDER env var.
-    Instantiating AnthropicProvider validates the key shape but does not
-    make any API call."""
+
+    Instantiation does not hit the network; a bad Anthropic key surfaces
+    as an LLMProviderError on the first Secretary call rather than at
+    startup. load_settings already rejected obviously-malformed keys
+    (empty or not starting with 'sk-').
+    """
     provider_name = os.environ.get("LLM_PROVIDER", "anthropic").strip().lower() or "anthropic"
     model = os.environ.get("LLM_MODEL", "claude-sonnet-4-6").strip() or "claude-sonnet-4-6"
 
