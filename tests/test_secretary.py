@@ -204,6 +204,119 @@ async def test_secretary_returns_noop_for_unknown_routing_reason(tmp_path: Path)
 
 
 # Helpers used by many Secretary tests.
+@pytest.mark.asyncio
+async def test_secretary_listener_cooldown_not_yet_open(tmp_path: Path) -> None:
+    """First message into a fresh chat: cooldown counters start at zero and
+    default last_reply_at = epoch, so time is elapsed but message count and
+    weighted char count are not. No LLM call."""
+    from project0.agents.secretary import Secretary
+    from project0.llm.provider import FakeProvider
+    from project0.store import Store
+
+    store = Store(tmp_path / "t.db")
+    store.init_schema()
+    llm = FakeProvider(responses=[])
+    sec = Secretary(
+        llm=llm,
+        memory=store.agent_memory("secretary"),
+        messages_store=store.messages(),
+        persona=_build_trivial_persona(),
+        config=_build_trivial_config(),  # n_min=3, l_min=100
+    )
+
+    result = await sec.handle(_listener_env(chat_id=777, body="hi"))
+    assert result is None
+    assert len(llm.calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_secretary_listener_cooldown_opens_after_thresholds(tmp_path: Path) -> None:
+    """Accumulate enough messages and characters so all three thresholds
+    cross; the listener path should then call the LLM."""
+    from project0.agents.secretary import Secretary
+    from project0.llm.provider import FakeProvider
+    from project0.store import Store
+
+    store = Store(tmp_path / "t.db")
+    store.init_schema()
+    llm = FakeProvider(responses=["[skip]", "[skip]", "[skip]", "[skip]"])
+    sec = Secretary(
+        llm=llm,
+        memory=store.agent_memory("secretary"),
+        messages_store=store.messages(),
+        persona=_build_trivial_persona(),
+        config=_build_trivial_config(),  # n_min=3, l_min=100
+    )
+
+    # Three short messages — msgs threshold crosses on the third, but chars
+    # may still be under 100.
+    for i, body in enumerate(["hey", "yo", "sup"]):
+        _ = await sec.handle(_listener_env(chat_id=777, body=body, env_id=i + 1))
+
+    # After three 3-char messages, weighted chars = 9. Below threshold 100.
+    assert len(llm.calls) == 0
+
+    # One more message with a longer body pushes chars past 100.
+    long_body = "这里有一段比较长的中文消息,足够让加权字符数超过阈值" + "x" * 50
+    _ = await sec.handle(_listener_env(chat_id=777, body=long_body, env_id=4))
+
+    # Now all three thresholds are exceeded → LLM called once, response was
+    # [skip], so counters are NOT reset.
+    assert len(llm.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_secretary_listener_cooldown_t_min_blocks(tmp_path: Path) -> None:
+    """Even if msg and char thresholds are crossed, if t_min has not
+    elapsed since the last reply, no LLM call."""
+    from datetime import UTC, datetime
+    from project0.agents.secretary import Secretary
+    from project0.llm.provider import FakeProvider
+    from project0.store import Store
+
+    store = Store(tmp_path / "t.db")
+    store.init_schema()
+    mem = store.agent_memory("secretary")
+
+    # Record a recent last_reply_at directly.
+    now_iso = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    mem.set("last_reply_at_999", now_iso)
+
+    llm = FakeProvider(responses=[])
+    sec = Secretary(
+        llm=llm,
+        memory=mem,
+        messages_store=store.messages(),
+        persona=_build_trivial_persona(),
+        config=_build_trivial_config(),  # t_min=60 seconds
+    )
+
+    # Push a giant message that would otherwise trip msg+char thresholds.
+    giant = "x" * 5000
+    result = await sec.handle(_listener_env(chat_id=999, body=giant, env_id=1))
+    # msgs_since_reply now 1 (< n_min=3), t since last reply ~0 (< 60)
+    assert result is None
+    assert len(llm.calls) == 0
+
+
+def _listener_env(chat_id: int, body: str, env_id: int = 10) -> "Envelope":
+    from project0.envelope import Envelope
+    return Envelope(
+        id=env_id,
+        ts="2026-04-13T12:00:00Z",
+        parent_id=1,
+        source="internal",
+        telegram_chat_id=chat_id,
+        telegram_msg_id=None,
+        received_by_bot=None,
+        from_kind="system",
+        from_agent=None,
+        to_agent="secretary",
+        body=body,
+        routing_reason="listener_observation",
+    )
+
+
 def _build_trivial_persona():
     from project0.agents.secretary import SecretaryPersona
     return SecretaryPersona(

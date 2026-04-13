@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from project0.envelope import AgentResult, Envelope
-from project0.llm.provider import LLMProvider
+from project0.llm.provider import LLMProvider, LLMProviderError, Msg
 from project0.store import AgentMemory, MessagesStore
 
 log = logging.getLogger(__name__)
@@ -225,8 +225,67 @@ class Secretary:
         log.debug("secretary: ignoring routing_reason=%s", reason)
         return None
 
+    def _cooldown_key(self, base: str, chat_id: int) -> str:
+        return f"{base}_{chat_id}"
+
+    def _cooldown_check_and_update(
+        self, chat_id: int, body: str
+    ) -> bool:
+        """Update the cooldown counters with the new message and return True
+        if all three thresholds have been exceeded. Pure code; no LLM call."""
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC)
+        cfg = self._config
+
+        last_at_key = self._cooldown_key("last_reply_at", chat_id)
+        msgs_key = self._cooldown_key("msgs_since_reply", chat_id)
+        chars_key = self._cooldown_key("chars_since_reply", chat_id)
+
+        last_at_raw = self._memory.get(last_at_key)
+        if last_at_raw is None:
+            # Never replied → treat as forever ago. t_min is satisfied.
+            last_at_elapsed = cfg.t_min_seconds + 1
+        else:
+            try:
+                last_at = datetime.fromisoformat(last_at_raw.replace("Z", "+00:00"))
+                last_at_elapsed = int((now - last_at).total_seconds())
+            except (ValueError, AttributeError):
+                last_at_elapsed = cfg.t_min_seconds + 1
+
+        msgs = int(self._memory.get(msgs_key) or 0) + 1
+        chars = int(self._memory.get(chars_key) or 0) + weighted_len(body)
+
+        self._memory.set(msgs_key, msgs)
+        self._memory.set(chars_key, chars)
+
+        return (
+            last_at_elapsed >= cfg.t_min_seconds
+            and msgs >= cfg.n_min_messages
+            and chars >= cfg.l_min_weighted_chars
+        )
+
     # Path handlers are implemented in later tasks. For now they return None.
     async def _handle_listener(self, env: Envelope) -> AgentResult | None:
+        chat_id = env.telegram_chat_id
+        if chat_id is None:
+            return None
+        if not self._cooldown_check_and_update(chat_id, env.body):
+            return None
+        # Cooldown open → ask the LLM. The actual call happens in Task 11.
+        return await self._listener_llm_call(env)
+
+    async def _listener_llm_call(self, env: Envelope) -> AgentResult | None:
+        # Placeholder; implemented in Task 11. For now fire the LLM so
+        # Task 10's test can observe a call count.
+        try:
+            _ = await self._llm.complete(
+                system=self._persona.core + "\n\n" + self._persona.listener_mode,
+                messages=[Msg(role="user", content=env.body)],
+                max_tokens=self._config.max_tokens_listener,
+            )
+        except LLMProviderError as e:
+            log.warning("secretary listener LLM call failed: %s", e)
         return None
 
     async def _handle_addressed(self, env: Envelope) -> AgentResult | None:
