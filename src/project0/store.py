@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -251,6 +251,36 @@ class MessagesStore:
             env.id = r["id"]
             result.append(env)
         return result
+
+    def has_recent_user_text_in_group(
+        self, *, chat_id: int, body: str, within_seconds: int
+    ) -> bool:
+        """Content-based dedup gate for multi-bot groups.
+
+        In a Telegram group with multiple bot members, sending one user
+        message can produce two physically distinct messages with sequential
+        ``message_id`` values — one delivered to each bot's update queue.
+        The UNIQUE constraint on ``telegram_msg_id`` cannot catch this
+        because the ids are legitimately different. This method lets the
+        orchestrator dedup on ``(chat_id, body)`` within a short time
+        window before inserting.
+        """
+        cutoff_iso = (
+            datetime.now(UTC) - timedelta(seconds=within_seconds)
+        ).isoformat(timespec="seconds").replace("+00:00", "Z")
+        row = self._conn.execute(
+            """
+            SELECT id FROM messages
+            WHERE source = 'telegram_group'
+              AND telegram_chat_id = ?
+              AND from_kind = 'user'
+              AND ts >= ?
+              AND json_extract(envelope_json, '$.body') = ?
+            LIMIT 1
+            """,
+            (chat_id, cutoff_iso, body),
+        ).fetchone()
+        return row is not None
 
 
 class ChatFocusStore:

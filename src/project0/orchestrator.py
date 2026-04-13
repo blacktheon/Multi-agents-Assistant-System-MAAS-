@@ -50,12 +50,40 @@ class Orchestrator:
             return
 
         async with self.store.lock:
-            # (2) Build inbound envelope, (3) resolve target, (4) try to insert.
+            # (2) Build inbound envelope.
             inbound = self._build_inbound_envelope(update)
+
+            # (2a) Content-based dedup for multi-bot groups. In a Telegram
+            # group with multiple bot members, one user send can become two
+            # physically distinct messages with sequential telegram_msg_ids
+            # — one delivered to each bot's update queue — so the UNIQUE
+            # constraint on telegram_msg_id cannot catch them. Drop any
+            # inbound whose (chat_id, body) was already seen within the last
+            # few seconds.
+            if (
+                update.kind == "group"
+                and update.chat_id in self.allowed_chat_ids
+                and self.store.messages().has_recent_user_text_in_group(
+                    chat_id=update.chat_id,
+                    body=update.text,
+                    within_seconds=5,
+                )
+            ):
+                log.info(
+                    "content-dedup: dropping duplicate body=%r in chat=%s",
+                    update.text,
+                    update.chat_id,
+                )
+                return
+
+            # (3) Insert. The msg_id UNIQUE constraint is the secondary
+            # defense: it catches the case where the same physical Telegram
+            # message is delivered to multiple pollers, which content-dedup
+            # also handles but more conservatively.
             persisted = self.store.messages().insert(inbound)
             if persisted is None:
                 log.info(
-                    "dedup: dropping duplicate telegram msg chat=%s id=%s",
+                    "msgid-dedup: dropping duplicate telegram msg chat=%s id=%s",
                     update.chat_id,
                     update.msg_id,
                 )
