@@ -25,6 +25,7 @@ def _full_env() -> dict[str, str]:
     return {
         "TELEGRAM_BOT_TOKEN_MANAGER": "m-token",
         "TELEGRAM_BOT_TOKEN_INTELLIGENCE": "i-token",
+        "TELEGRAM_BOT_TOKEN_SECRETARY": "s-token",
         "TELEGRAM_ALLOWED_CHAT_IDS": "-100123,-100456",
         "TELEGRAM_ALLOWED_USER_IDS": "42",
         "ANTHROPIC_API_KEY": "sk-ant-xxx",
@@ -38,7 +39,11 @@ def test_load_settings_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(k, v)
     s = load_settings()
     assert isinstance(s, Settings)
-    assert s.bot_tokens == {"manager": "m-token", "intelligence": "i-token"}
+    assert s.bot_tokens == {
+        "manager": "m-token",
+        "intelligence": "i-token",
+        "secretary": "s-token",
+    }
     assert s.allowed_chat_ids == frozenset({-100123, -100456})
     assert s.allowed_user_ids == frozenset({42})
     assert s.anthropic_api_key == "sk-ant-xxx"
@@ -51,6 +56,7 @@ def test_load_settings_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     [
         "TELEGRAM_BOT_TOKEN_MANAGER",
         "TELEGRAM_BOT_TOKEN_INTELLIGENCE",
+        "TELEGRAM_BOT_TOKEN_SECRETARY",
         "TELEGRAM_ALLOWED_CHAT_IDS",
         "TELEGRAM_ALLOWED_USER_IDS",
         "ANTHROPIC_API_KEY",
