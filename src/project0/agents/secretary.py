@@ -389,4 +389,30 @@ class Secretary:
         return AgentResult(reply_text=reply, delegate_to=None, handoff_text=None)
 
     async def _handle_reminder(self, env: Envelope) -> AgentResult | None:
-        return None
+        payload = env.payload or {}
+        appointment = payload.get("appointment", "").strip()
+        when = payload.get("when", "").strip()
+        note = payload.get("note", "").strip()
+
+        system = self._persona.core + "\n\n" + self._persona.reminder_mode
+        parts = ["Manager 让你提醒用户一件事。用你自己的口吻温柔地传达："]
+        if appointment:
+            parts.append(f"- 事情: {appointment}")
+        if when:
+            parts.append(f"- 时间: {when}")
+        if note:
+            parts.append(f"- 备注: {note}")
+        parts.append("不要编造任何 Manager 没给你的细节。")
+        user_msg = "\n".join(parts)
+
+        try:
+            reply = await self._llm.complete(
+                system=system,
+                messages=[Msg(role="user", content=user_msg)],
+                max_tokens=self._config.max_tokens_reply,
+            )
+        except LLMProviderError as e:
+            log.warning("secretary reminder LLM call failed: %s", e)
+            return None
+
+        return AgentResult(reply_text=reply, delegate_to=None, handoff_text=None)

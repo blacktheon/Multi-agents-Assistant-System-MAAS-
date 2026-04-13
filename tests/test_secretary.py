@@ -625,3 +625,82 @@ def _build_trivial_config():
         max_tokens_listener=400,
         skip_sentinels=["[skip]", "[跳过]", "【skip】", "【跳过】"],
     )
+
+
+@pytest.mark.asyncio
+async def test_secretary_reminder_path_incorporates_payload(tmp_path: Path) -> None:
+    from project0.agents.secretary import Secretary
+    from project0.llm.provider import FakeProvider
+    from project0.store import Store
+
+    store = Store(tmp_path / "t.db")
+    store.init_schema()
+    llm = FakeProvider(responses=["提醒你一下 项目评审 明天下午3点哦 别迟到"])
+    sec = Secretary(
+        llm=llm,
+        memory=store.agent_memory("secretary"),
+        messages_store=store.messages(),
+        persona=_build_trivial_persona(),
+        config=_build_trivial_config(),
+    )
+
+    env = Envelope(
+        id=8,
+        ts="2026-04-13T12:00:00Z",
+        parent_id=1,
+        source="internal",
+        telegram_chat_id=100,
+        telegram_msg_id=None,
+        received_by_bot=None,
+        from_kind="agent",
+        from_agent="manager",
+        to_agent="secretary",
+        body="",  # body empty; all content in payload
+        routing_reason="manager_delegation",
+        payload={
+            "kind": "reminder_request",
+            "appointment": "项目评审",
+            "when": "明天下午3点",
+            "note": "别迟到",
+        },
+    )
+    result = await sec.handle(env)
+    assert result is not None
+    assert "项目评审" in result.reply_text  # type: ignore[operator]
+
+    # System prompt used reminder_mode section.
+    assert "REMINDER" in llm.calls[0].system
+    # User prompt included the payload fields.
+    user_content = llm.calls[0].messages[0].content
+    assert "项目评审" in user_content
+    assert "明天下午3点" in user_content
+    assert "别迟到" in user_content
+
+
+@pytest.mark.asyncio
+async def test_secretary_reminder_path_without_payload_kind_is_noop(tmp_path: Path) -> None:
+    """A manager_delegation envelope without a reminder_request payload
+    is ignored (future payload kinds may be handled differently)."""
+    from project0.agents.secretary import Secretary
+    from project0.llm.provider import FakeProvider
+    from project0.store import Store
+
+    store = Store(tmp_path / "t.db")
+    store.init_schema()
+    llm = FakeProvider(responses=[])
+    sec = Secretary(
+        llm=llm, memory=store.agent_memory("secretary"),
+        messages_store=store.messages(),
+        persona=_build_trivial_persona(), config=_build_trivial_config(),
+    )
+    env = Envelope(
+        id=9, ts="2026-04-13T12:00:00Z", parent_id=None,
+        source="internal", telegram_chat_id=100, telegram_msg_id=None,
+        received_by_bot=None, from_kind="agent", from_agent="manager",
+        to_agent="secretary", body="unknown delegation",
+        routing_reason="manager_delegation",
+        payload={"kind": "something_else"},
+    )
+    result = await sec.handle(env)
+    assert result is None
+    assert len(llm.calls) == 0
