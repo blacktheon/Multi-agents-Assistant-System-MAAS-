@@ -165,3 +165,68 @@ rm data/store.db
 
 The schema is recreated on next startup. There is no migration system
 in the skeleton.
+
+## Google Cloud setup (sub-project 6b)
+
+The Google Calendar integration needs a personal OAuth client. This is
+a one-time setup done through the Google Cloud Console and takes about
+five minutes.
+
+1. Go to https://console.cloud.google.com, create a new project called
+   `project-0` (or reuse an existing personal project).
+2. In the project, open the API Library and enable the **Google Calendar
+   API**.
+3. Open the OAuth consent screen page:
+   - User type: **External**
+   - App name: `Project 0`
+   - User support email: your own email
+   - Scopes: add `https://www.googleapis.com/auth/calendar.events`
+   - Test users: add your own Google account
+   The app stays in **Testing** mode permanently. This is correct for a
+   personal tool — no Google verification review is required and your
+   token stays valid.
+4. Open the Credentials page and create OAuth 2.0 credentials:
+   - Type: **Desktop app**
+   - Name: `Project 0 local`
+   Download the resulting JSON file.
+5. Save the downloaded file as `data/google_client_secrets.json` in this
+   repo. `data/` is already gitignored so this file cannot land in the
+   repo by accident.
+
+You only do these steps once per personal Google account. After that,
+the OAuth token file at `data/google_token.json` is created automatically
+the first time you run `scripts/calendar_smoke.py`.
+
+## 6b smoke test
+
+After completing Google Cloud setup above, run:
+
+    uv run python scripts/calendar_smoke.py
+
+On first run a browser window opens asking you to authorize Project 0
+to access your calendar. Approve, then return to the terminal. The
+script walks through seven steps:
+
+1. Authorize (browser flow on first run; silent load on later runs).
+2. Read upcoming 7 days — prints a table of your real events.
+3. Create a test event 1 hour from now. Pauses for you to confirm
+   visually in Google Calendar on any device, then press Enter.
+4. Update the test event's title. Pauses again.
+5. Round-trip the edit through `get_event` and assert it matches.
+6. Delete the test event. Pauses for visual confirmation.
+7. Verify that a bogus event ID raises `GoogleCalendarError`.
+
+If the script crashes between steps 3 and 6, an `atexit` handler makes
+a best-effort attempt to delete the test event. If the network is down
+at exit time, delete it manually in Google Calendar.
+
+To refresh the golden test fixtures after an SDK upgrade or a Google
+API change, delete `data/google_token.json` and run:
+
+    uv run python scripts/calendar_smoke.py --dump-fixtures tests/fixtures/google_calendar/
+
+Then commit the updated fixtures.
+
+To revoke Project 0's access entirely, visit
+https://myaccount.google.com/permissions, find "Project 0" in the list,
+and remove its access. Delete `data/google_token.json` locally afterwards.
