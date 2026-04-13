@@ -390,9 +390,9 @@ class Secretary:
 
     async def _handle_reminder(self, env: Envelope) -> AgentResult | None:
         payload = env.payload or {}
-        appointment = payload.get("appointment", "").strip()
-        when = payload.get("when", "").strip()
-        note = payload.get("note", "").strip()
+        appointment = (payload.get("appointment") or "").strip()
+        when = (payload.get("when") or "").strip()
+        note = (payload.get("note") or "").strip()
 
         system = self._persona.core + "\n\n" + self._persona.reminder_mode
         parts = ["Manager 让你提醒用户一件事。用你自己的口吻温柔地传达："]

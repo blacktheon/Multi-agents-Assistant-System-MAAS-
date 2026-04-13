@@ -704,3 +704,52 @@ async def test_secretary_reminder_path_without_payload_kind_is_noop(tmp_path: Pa
     result = await sec.handle(env)
     assert result is None
     assert len(llm.calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_secretary_reminder_path_handles_none_payload_values(tmp_path: Path) -> None:
+    """Manager's JSON output may emit null for optional fields; payload values
+    of None must not crash _handle_reminder."""
+    from project0.agents.secretary import Secretary
+    from project0.llm.provider import FakeProvider
+    from project0.store import Store
+
+    store = Store(tmp_path / "t.db")
+    store.init_schema()
+    llm = FakeProvider(responses=["记得开会哦"])
+    sec = Secretary(
+        llm=llm,
+        memory=store.agent_memory("secretary"),
+        messages_store=store.messages(),
+        persona=_build_trivial_persona(),
+        config=_build_trivial_config(),
+    )
+    env = Envelope(
+        id=None,
+        ts="2026-04-13T12:00:00Z",
+        parent_id=None,
+        source="internal",
+        telegram_chat_id=None,
+        telegram_msg_id=None,
+        received_by_bot=None,
+        from_kind="agent",
+        from_agent="manager",
+        to_agent="secretary",
+        body="",
+        routing_reason="manager_delegation",
+        payload={
+            "kind": "reminder_request",
+            "appointment": "开会",
+            "when": None,        # explicit null
+            "note": None,        # explicit null
+        },
+    )
+    result = await sec.handle(env)
+    assert result is not None
+    assert result.reply_text == "记得开会哦"
+    # User message should include appointment but not null fields.
+    user_content = llm.calls[0].messages[0].content
+    assert "开会" in user_content
+    # Null-handled fields should not emit label lines.
+    assert "- 时间:" not in user_content
+    assert "- 备注:" not in user_content
