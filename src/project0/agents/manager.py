@@ -1,12 +1,4 @@
-"""Manager agent — loader functions for persona and config.
-
-The real Manager class lands in later tasks (11–13). This module already
-exports ``load_manager_persona`` and ``load_manager_config`` so the
-composition-root wiring in main.py can import them incrementally.
-
-For now it still exports ``manager_stub`` so ``agents/registry.py`` keeps
-importing cleanly; Task 13 removes the stub once Manager is fully wired.
-"""
+"""Manager agent — loader functions for persona and config."""
 
 from __future__ import annotations
 
@@ -517,21 +509,3 @@ class Manager:
             f"manager exceeded max_tool_iterations={self._config.max_tool_iterations}"
         )
 
-
-# --- placeholder stub (removed in Task 14) -----------------------------------
-
-async def manager_stub(env: Envelope) -> AgentResult:
-    """Legacy stub kept only so agents/registry.py imports cleanly until
-    Task 14 swaps in the real Manager class. Behavior is the original
-    hardcoded rule: delegate to Intelligence if 'news' in body, else echo."""
-    if "news" in env.body.lower():
-        return AgentResult(
-            reply_text=None,
-            delegate_to="intelligence",
-            handoff_text="→ forwarding to @intelligence",
-        )
-    return AgentResult(
-        reply_text=f"[manager-stub] acknowledged: {env.body}",
-        delegate_to=None,
-        handoff_text=None,
-    )

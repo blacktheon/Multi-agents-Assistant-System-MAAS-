@@ -12,9 +12,36 @@ from __future__ import annotations
 
 import pytest
 
+from project0.agents import registry as reg
+from project0.envelope import AgentResult, Envelope
 from project0.orchestrator import Orchestrator
 from project0.store import Store
 from project0.telegram_io import FakeBotSender, InboundUpdate
+
+
+async def _news_delegating_manager(env: Envelope) -> AgentResult:
+    """Minimal manager that replicates old stub's delegation behaviour."""
+    if "news" in env.body.lower():
+        return AgentResult(
+            reply_text=None,
+            delegate_to="intelligence",
+            handoff_text="→ forwarding to @intelligence",
+        )
+    return AgentResult(reply_text="[noop-manager] ok", delegate_to=None, handoff_text=None)
+
+
+@pytest.fixture(autouse=True)
+def install_manager():
+    """Install a news-delegating manager for tests in this module."""
+    original = reg.AGENT_REGISTRY.get("manager")
+    reg.AGENT_REGISTRY["manager"] = _news_delegating_manager
+    try:
+        yield
+    finally:
+        if original is not None:
+            reg.AGENT_REGISTRY["manager"] = original
+        else:
+            reg.AGENT_REGISTRY.pop("manager", None)
 
 
 @pytest.mark.asyncio

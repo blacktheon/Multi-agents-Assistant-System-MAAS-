@@ -22,6 +22,24 @@ from project0.store import Store
 from project0.telegram_io import InboundUpdate
 
 
+async def _noop_manager(env: Envelope) -> AgentResult:
+    return AgentResult(reply_text="[noop-manager] ok", delegate_to=None, handoff_text=None)
+
+
+@pytest.fixture(autouse=True)
+def install_manager():
+    """Install a minimal no-op manager for every test in this module."""
+    original = AGENT_REGISTRY.get("manager")
+    AGENT_REGISTRY["manager"] = _noop_manager
+    try:
+        yield
+    finally:
+        if original is not None:
+            AGENT_REGISTRY["manager"] = original
+        else:
+            AGENT_REGISTRY.pop("manager", None)
+
+
 @dataclass
 class _RecordingSender:
     sent: list[tuple[str, int, str]] = field(default_factory=list)
@@ -103,7 +121,7 @@ async def test_group_message_fans_out_to_secretary_listener(
     assert obs.body == "hello all"
     assert obs.parent_id is not None  # links to the original user msg
 
-    # Sender: manager_stub sent its reply; listener stayed silent.
+    # Sender: manager sent its reply; listener stayed silent.
     assert any(a == "manager" for a, _, _ in sender.sent)
     assert not any(a == "secretary" for a, _, _ in sender.sent)
 

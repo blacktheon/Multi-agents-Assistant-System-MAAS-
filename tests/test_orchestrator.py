@@ -2,10 +2,42 @@ from __future__ import annotations
 
 import pytest
 
+from project0.agents import registry as reg
+from project0.envelope import AgentResult, Envelope
 from project0.errors import RoutingError
 from project0.orchestrator import Orchestrator
 from project0.store import Store
 from project0.telegram_io import FakeBotSender, InboundUpdate
+
+
+async def _noop_manager(env: Envelope) -> AgentResult:
+    return AgentResult(reply_text="[noop-manager] ok", delegate_to=None, handoff_text=None)
+
+
+async def _news_delegating_manager(env: Envelope) -> AgentResult:
+    """Manager that delegates on 'news' keyword (mirrors original stub logic)."""
+    if "news" in env.body.lower():
+        return AgentResult(
+            reply_text=None,
+            delegate_to="intelligence",
+            handoff_text="→ forwarding to @intelligence",
+        )
+    return AgentResult(reply_text="[noop-manager] ok", delegate_to=None, handoff_text=None)
+
+
+@pytest.fixture(autouse=True)
+def install_manager():
+    """Install a minimal no-op manager into AGENT_REGISTRY for every test in
+    this module. Removed in teardown so the registry stays clean."""
+    original = reg.AGENT_REGISTRY.get("manager")
+    reg.AGENT_REGISTRY["manager"] = _news_delegating_manager
+    try:
+        yield
+    finally:
+        if original is not None:
+            reg.AGENT_REGISTRY["manager"] = original
+        else:
+            reg.AGENT_REGISTRY.pop("manager", None)
 
 
 @pytest.fixture()
@@ -42,7 +74,7 @@ async def test_default_manager_on_first_message(
     # One outbound reply from manager's bot.
     assert len(sender.sent) == 1
     assert sender.sent[0]["agent"] == "manager"
-    assert "[manager-stub]" in sender.sent[0]["text"]  # type: ignore[operator]
+    assert "noop-manager" in sender.sent[0]["text"]  # type: ignore[operator]
     # Focus is now manager.
     assert store.chat_focus().get(-100) == "manager"
 
@@ -160,11 +192,8 @@ async def test_non_manager_delegation_raises_routing_error(
 ) -> None:
     """Delegation authority belongs exclusively to Manager. If Intelligence
     ever returned a delegation, the orchestrator must refuse it."""
-    from project0.agents import registry as reg
-    from project0.envelope import AgentResult
-    from project0.envelope import Envelope as E
 
-    async def rogue_intelligence(env: E) -> AgentResult:
+    async def rogue_intelligence(env: Envelope) -> AgentResult:
         return AgentResult(
             reply_text=None,
             delegate_to="manager",
