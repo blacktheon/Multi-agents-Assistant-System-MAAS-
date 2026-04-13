@@ -58,11 +58,56 @@ class CalendarEvent:
 
 
 def raw_event_to_model(raw: dict[str, Any], user_tz: ZoneInfo) -> CalendarEvent:
-    """Translate a raw Google event dict into a :class:`CalendarEvent`.
+    """Translate a raw Google event dict into a :class:`CalendarEvent`."""
+    start_raw = raw.get("start", {})
+    end_raw = raw.get("end", {})
 
-    Implementation lands across Tasks 5–8.
+    start_dt, all_day = _parse_endpoint(start_raw, user_tz)
+    end_dt, _ = _parse_endpoint(end_raw, user_tz)
+
+    _warn_unknown_fields(raw)
+
+    return CalendarEvent(
+        id=raw.get("id", ""),
+        summary=raw.get("summary", ""),
+        start=start_dt,
+        end=end_dt,
+        all_day=all_day,
+        description=raw.get("description"),
+        location=raw.get("location"),
+        html_link=raw.get("htmlLink", ""),
+    )
+
+
+def _parse_endpoint(
+    endpoint: dict[str, Any],
+    user_tz: ZoneInfo,
+) -> tuple[datetime, bool]:
+    """Parse one side of a Google event's start/end payload.
+
+    Returns (datetime-in-user_tz, all_day). Handles both the ``dateTime``
+    shape (normal events) and the ``date`` shape (all-day events).
     """
-    raise NotImplementedError
+    if "dateTime" in endpoint:
+        parsed = datetime.fromisoformat(endpoint["dateTime"])
+        return parsed.astimezone(user_tz), False
+    if "date" in endpoint:
+        # All-day events: Google gives us a calendar date with no tz.
+        # Materialize it as midnight in the user's local timezone.
+        date_str: str = endpoint["date"]
+        naive = datetime.fromisoformat(date_str)
+        return naive.replace(tzinfo=user_tz), True
+    raise ValueError(f"event endpoint has neither dateTime nor date: {endpoint!r}")
+
+
+def _warn_unknown_fields(raw: dict[str, Any]) -> None:
+    """Log a rate-limited warning for any top-level key we don't recognise."""
+    unknown = set(raw.keys()) - _CONSUMED_KEYS - _IGNORABLE_KEYS
+    for key in unknown:
+        if key in _warned_unknown_keys:
+            continue
+        _warned_unknown_keys.add(key)
+        logger.warning("unknown GCal event field: %s", key)
 
 
 def model_to_raw(

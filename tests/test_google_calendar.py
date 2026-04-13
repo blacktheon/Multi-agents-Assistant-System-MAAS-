@@ -10,11 +10,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from project0.calendar import model as model_mod
-from project0.calendar.model import (
-    CalendarEvent,
-    model_to_raw,
-    raw_event_to_model,
-)
+from project0.calendar.model import raw_event_to_model
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "google_calendar"
 BEIJING = ZoneInfo("Asia/Shanghai")
@@ -29,3 +25,20 @@ def load_fixture(name: str) -> dict[str, Any]:
 def _reset_unknown_field_warnings() -> None:
     """Clear the translator's module-level 'warned keys' set before each test."""
     model_mod._warned_unknown_keys.clear()
+
+
+def test_list_events_dateTime_translates_to_user_tz() -> None:
+    raw = load_fixture("list_single_dateTime.json")["items"][0]
+
+    event = raw_event_to_model(raw, BEIJING)
+
+    assert event.id == "abc123def456"
+    assert event.summary == "Coffee with prof"
+    assert event.description == "Discuss the April review schedule"
+    assert event.location == "Starbucks Nanjing West Rd"
+    assert event.html_link == "https://www.google.com/calendar/event?eid=abc123"
+    assert event.all_day is False
+    assert event.start.tzinfo is not None
+    assert event.end.tzinfo is not None
+    assert event.start.isoformat() == "2026-04-15T14:00:00+08:00"
+    assert event.end.isoformat() == "2026-04-15T15:00:00+08:00"
