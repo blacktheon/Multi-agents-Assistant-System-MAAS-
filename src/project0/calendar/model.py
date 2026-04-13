@@ -122,6 +122,32 @@ def model_to_raw(
 
     Only fields the caller passed are emitted. ``None`` fields are omitted
     entirely so partial updates on Google's side never blank out existing
-    values. Implementation lands in Task 9.
+    values.
     """
-    raise NotImplementedError
+    body: dict[str, Any] = {}
+    if summary is not None:
+        body["summary"] = summary
+    if description is not None:
+        body["description"] = description
+    if location is not None:
+        body["location"] = location
+    if start is not None:
+        _require_aware(start, "start")
+        body["start"] = {"dateTime": start.isoformat()}
+    if end is not None:
+        _require_aware(end, "end")
+        body["end"] = {"dateTime": end.isoformat()}
+    return body
+
+
+def _require_aware(dt: datetime, field_name: str) -> None:
+    """Reject naive datetimes at the boundary.
+
+    Naive datetimes are the #1 cause of calendar bugs — they silently
+    adopt whatever timezone the serializer assumes, which is rarely the
+    one the caller thought. Raising here is programmer-error loud.
+    """
+    if dt.tzinfo is None:
+        raise ValueError(
+            f"{field_name} must be a timezone-aware datetime; got a naive value"
+        )

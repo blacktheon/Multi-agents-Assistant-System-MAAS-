@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -10,7 +11,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from project0.calendar import model as model_mod
-from project0.calendar.model import raw_event_to_model
+from project0.calendar.model import model_to_raw, raw_event_to_model
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "google_calendar"
 BEIJING = ZoneInfo("Asia/Shanghai")
@@ -106,6 +107,42 @@ def test_unknown_field_logs_warning_once(caplog: pytest.LogCaptureFixture) -> No
         if "futureFieldFromGoogle" in rec.message
     ]
     assert second_pass_warnings == []  # rate-limited: no second warning
+
+
+def test_model_to_raw_full_body() -> None:
+    start = datetime.fromisoformat("2026-04-20T10:00:00+08:00")
+    end = datetime.fromisoformat("2026-04-20T11:00:00+08:00")
+
+    body = model_to_raw(
+        summary="Meeting",
+        start=start,
+        end=end,
+        description="Project 0 sync",
+        location="Room 3",
+    )
+
+    assert body == {
+        "summary": "Meeting",
+        "description": "Project 0 sync",
+        "location": "Room 3",
+        "start": {"dateTime": "2026-04-20T10:00:00+08:00"},
+        "end": {"dateTime": "2026-04-20T11:00:00+08:00"},
+    }
+
+
+def test_model_to_raw_partial_update_omits_nones() -> None:
+    # Simulating an update_event(event_id, summary="new") call: only summary
+    # should appear in the resulting body. Nothing else, especially no
+    # null-valued description/location/start/end that would blank existing
+    # values on Google's side.
+    body = model_to_raw(summary="new title")
+    assert body == {"summary": "new title"}
+
+
+def test_model_to_raw_rejects_naive_datetime() -> None:
+    naive = datetime(2026, 4, 20, 10, 0, 0)  # no tzinfo
+    with pytest.raises(ValueError, match="timezone"):
+        model_to_raw(start=naive)
 
 
 def test_unknown_field_does_not_warn_for_ignorable_keys() -> None:
