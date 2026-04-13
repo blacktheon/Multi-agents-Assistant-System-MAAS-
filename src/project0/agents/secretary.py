@@ -280,18 +280,64 @@ class Secretary:
         # Cooldown open → ask the LLM. The actual call happens in Task 11.
         return await self._listener_llm_call(env)
 
+    def _format_transcript(self, envs: list[Envelope]) -> str:
+        """Turn a list of envelopes into a speaker-labeled transcript. Lines
+        are in chronological order (oldest first). Secretary's own lines are
+        labeled 'secretary:' so the model sees its own voice and stays
+        consistent. Other agents are labeled '[other-agent: NAME]:' so the
+        model knows it is overhearing, not being addressed."""
+        lines: list[str] = []
+        for e in envs:
+            if e.from_kind == "user":
+                lines.append(f"user: {e.body}")
+            elif e.from_kind == "agent":
+                speaker = e.from_agent or "unknown"
+                if speaker == "secretary":
+                    lines.append(f"secretary: {e.body}")
+                else:
+                    lines.append(f"[other-agent: {speaker}]: {e.body}")
+            else:
+                continue
+        return "\n".join(lines)
+
+    def _load_transcript(self, chat_id: int) -> str:
+        envs = self._messages.recent_for_chat(
+            chat_id=chat_id, limit=self._config.transcript_window
+        )
+        return self._format_transcript(envs)
+
+    def _reset_cooldown_after_reply(self, chat_id: int) -> None:
+        now_iso = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+        self._memory.set(self._cooldown_key("last_reply_at", chat_id), now_iso)
+        self._memory.set(self._cooldown_key("msgs_since_reply", chat_id), 0)
+        self._memory.set(self._cooldown_key("chars_since_reply", chat_id), 0)
+
     async def _listener_llm_call(self, env: Envelope) -> AgentResult | None:
-        # Placeholder; implemented in Task 11. For now fire the LLM so
-        # Task 10's test can observe a call count.
+        chat_id = env.telegram_chat_id
+        assert chat_id is not None
+        transcript = self._load_transcript(chat_id)
+        system = self._persona.core + "\n\n" + self._persona.listener_mode
+        user_msg = (
+            "对话记录(最后一条是用户刚发的):\n"
+            f"{transcript}\n"
+            f"user: {env.body}"
+        )
         try:
-            _ = await self._llm.complete(
-                system=self._persona.core + "\n\n" + self._persona.listener_mode,
-                messages=[Msg(role="user", content=env.body)],
+            reply = await self._llm.complete(
+                system=system,
+                messages=[Msg(role="user", content=user_msg)],
                 max_tokens=self._config.max_tokens_listener,
             )
         except LLMProviderError as e:
             log.warning("secretary listener LLM call failed: %s", e)
-        return None
+            return None
+
+        if is_skip_sentinel(reply, self._config.skip_sentinels):
+            log.info("secretary considered, passed (skip sentinel)")
+            return None
+
+        self._reset_cooldown_after_reply(chat_id)
+        return AgentResult(reply_text=reply, delegate_to=None, handoff_text=None)
 
     async def _handle_addressed(self, env: Envelope) -> AgentResult | None:
         return None

@@ -329,6 +329,141 @@ def _build_trivial_persona():
     )
 
 
+@pytest.mark.asyncio
+async def test_secretary_listener_skip_does_not_reset_counters(tmp_path: Path) -> None:
+    from project0.agents.secretary import Secretary
+    from project0.llm.provider import FakeProvider
+    from project0.store import Store
+
+    store = Store(tmp_path / "t.db")
+    store.init_schema()
+    mem = store.agent_memory("secretary")
+
+    mem.set("last_reply_at_555", "1970-01-01T00:00:00Z")
+    mem.set("msgs_since_reply_555", 10)
+    mem.set("chars_since_reply_555", 500)
+
+    llm = FakeProvider(responses=["[skip]"])
+    sec = Secretary(
+        llm=llm,
+        memory=mem,
+        messages_store=store.messages(),
+        persona=_build_trivial_persona(),
+        config=_build_trivial_config(),
+    )
+
+    result = await sec.handle(_listener_env(chat_id=555, body="next msg"))
+    assert result is None
+    assert mem.get("msgs_since_reply_555") == 11
+    assert mem.get("chars_since_reply_555") >= 500
+
+
+@pytest.mark.asyncio
+async def test_secretary_listener_reply_resets_counters(tmp_path: Path) -> None:
+    from project0.agents.secretary import Secretary
+    from project0.llm.provider import FakeProvider
+    from project0.store import Store
+
+    store = Store(tmp_path / "t.db")
+    store.init_schema()
+    mem = store.agent_memory("secretary")
+
+    mem.set("last_reply_at_666", "1970-01-01T00:00:00Z")
+    mem.set("msgs_since_reply_666", 10)
+    mem.set("chars_since_reply_666", 500)
+
+    llm = FakeProvider(responses=["嘿你今天这么勤快呢"])
+    sec = Secretary(
+        llm=llm,
+        memory=mem,
+        messages_store=store.messages(),
+        persona=_build_trivial_persona(),
+        config=_build_trivial_config(),
+    )
+
+    result = await sec.handle(_listener_env(chat_id=666, body="next msg"))
+    assert result is not None
+    assert result.reply_text == "嘿你今天这么勤快呢"
+    assert mem.get("msgs_since_reply_666") == 0
+    assert mem.get("chars_since_reply_666") == 0
+    last_at = mem.get("last_reply_at_666")
+    assert last_at is not None and last_at != "1970-01-01T00:00:00Z"
+
+
+@pytest.mark.asyncio
+async def test_secretary_listener_full_width_bracket_skip(tmp_path: Path) -> None:
+    from project0.agents.secretary import Secretary
+    from project0.llm.provider import FakeProvider
+    from project0.store import Store
+
+    store = Store(tmp_path / "t.db")
+    store.init_schema()
+    mem = store.agent_memory("secretary")
+    mem.set("last_reply_at_444", "1970-01-01T00:00:00Z")
+    mem.set("msgs_since_reply_444", 10)
+    mem.set("chars_since_reply_444", 500)
+
+    llm = FakeProvider(responses=["【跳过】"])
+    sec = Secretary(
+        llm=llm,
+        memory=mem,
+        messages_store=store.messages(),
+        persona=_build_trivial_persona(),
+        config=_build_trivial_config(),
+    )
+    result = await sec.handle(_listener_env(chat_id=444, body="msg"))
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_secretary_listener_loads_transcript_context(tmp_path: Path) -> None:
+    from project0.agents.secretary import Secretary
+    from project0.llm.provider import FakeProvider
+    from project0.store import Store
+
+    store = Store(tmp_path / "t.db")
+    store.init_schema()
+    mem = store.agent_memory("secretary")
+    mem.set("last_reply_at_333", "1970-01-01T00:00:00Z")
+    mem.set("msgs_since_reply_333", 10)
+    mem.set("chars_since_reply_333", 500)
+
+    for i, (from_agent, body) in enumerate([
+        (None, "用户说的一段话"),
+        ("manager", "manager stub answer"),
+        (None, "用户又说一句"),
+    ]):
+        store.messages().insert(Envelope(
+            id=None,
+            ts=f"2026-04-13T12:00:{i:02d}Z",
+            parent_id=None,
+            source="telegram_group",
+            telegram_chat_id=333,
+            telegram_msg_id=i + 1,
+            received_by_bot="manager",
+            from_kind="user" if from_agent is None else "agent",
+            from_agent=from_agent,
+            to_agent="manager" if from_agent is None else "user",
+            body=body,
+            routing_reason="default_manager" if from_agent is None else "outbound_reply",
+        ))
+
+    llm = FakeProvider(responses=["[skip]"])
+    sec = Secretary(
+        llm=llm,
+        memory=mem,
+        messages_store=store.messages(),
+        persona=_build_trivial_persona(),
+        config=_build_trivial_config(),
+    )
+    await sec.handle(_listener_env(chat_id=333, body="newest"))
+    assert len(llm.calls) == 1
+    user_msg = llm.calls[0].messages[0].content
+    assert "用户说的一段话" in user_msg
+    assert "manager stub answer" in user_msg
+    assert "用户又说一句" in user_msg
+
+
 def _build_trivial_config():
     from project0.agents.secretary import SecretaryConfig
     return SecretaryConfig(
@@ -339,5 +474,5 @@ def _build_trivial_config():
         model="claude-sonnet-4-6",
         max_tokens_reply=800,
         max_tokens_listener=400,
-        skip_sentinels=["[skip]", "[跳过]"],
+        skip_sentinels=["[skip]", "[跳过]", "【skip】", "【跳过】"],
     )
