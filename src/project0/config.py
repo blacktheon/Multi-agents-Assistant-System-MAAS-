@@ -12,6 +12,8 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
+from project0.agents.registry import AGENT_SPECS
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -21,12 +23,6 @@ class Settings:
     anthropic_api_key: str
     store_path: str
     log_level: str
-
-
-_REQUIRED_SINGLES = {
-    "TELEGRAM_BOT_TOKEN_MANAGER": "manager",
-    "TELEGRAM_BOT_TOKEN_INTELLIGENCE": "intelligence",
-}
 
 
 def _parse_int_csv(name: str, raw: str) -> frozenset[int]:
@@ -49,12 +45,17 @@ def _parse_int_csv(name: str, raw: str) -> frozenset[int]:
 def load_settings() -> Settings:
     load_dotenv(override=False)
 
+    # Derive required bot-token env vars from the agent registry so that
+    # adding a new agent is a single-place edit in agents/registry.py and
+    # does NOT require touching this file.
     bot_tokens: dict[str, str] = {}
-    for env_key, agent_name in _REQUIRED_SINGLES.items():
-        val = os.environ.get(env_key, "").strip()
+    for spec in AGENT_SPECS.values():
+        val = os.environ.get(spec.token_env_key, "").strip()
         if not val:
-            raise RuntimeError(f"{env_key} is required but was empty or unset")
-        bot_tokens[agent_name] = val
+            raise RuntimeError(
+                f"{spec.token_env_key} is required but was empty or unset"
+            )
+        bot_tokens[spec.name] = val
 
     chat_raw = os.environ.get("TELEGRAM_ALLOWED_CHAT_IDS", "").strip()
     if not chat_raw:
