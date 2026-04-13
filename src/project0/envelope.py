@@ -18,7 +18,7 @@ from typing import Any, Literal
 
 from project0.errors import RoutingError
 
-Source = Literal["telegram_group", "telegram_dm", "internal"]
+Source = Literal["telegram_group", "telegram_dm", "internal", "pulse"]
 FromKind = Literal["user", "agent", "system"]
 RoutingReason = Literal[
     "direct_dm",
@@ -28,6 +28,7 @@ RoutingReason = Literal[
     "manager_delegation",
     "outbound_reply",
     "listener_observation",
+    "pulse",
 ]
 
 
@@ -62,6 +63,7 @@ class AgentResult:
     reply_text: str | None
     delegate_to: str | None
     handoff_text: str | None
+    delegation_payload: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         has_reply = self.reply_text is not None
@@ -74,6 +76,10 @@ class AgentResult:
         if has_delegate and not self.handoff_text:
             raise RoutingError(
                 "AgentResult with delegate_to must also set handoff_text"
+            )
+        if self.delegation_payload is not None and not has_delegate:
+            raise RoutingError(
+                "AgentResult.delegation_payload set without delegate_to"
             )
 
     def is_reply(self) -> bool:
