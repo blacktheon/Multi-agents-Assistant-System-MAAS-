@@ -106,5 +106,19 @@ patterns = []
 """,
         encoding="utf-8",
     )
-    with pytest.raises(KeyError):
+    with pytest.raises(RuntimeError, match="cooldown.l_min_weighted_chars"):
         load_config(toml_path)
+
+
+def test_load_persona_raises_on_malformed_header(tmp_path: Path) -> None:
+    from project0.agents.secretary import load_persona
+
+    md = tmp_path / "malformed.md"
+    md.write_text(
+        """#秘书 — 角色设定
+body
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="malformed section header"):
+        load_persona(md)

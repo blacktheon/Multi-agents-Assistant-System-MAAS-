@@ -17,9 +17,10 @@ from __future__ import annotations
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
-@dataclass
+@dataclass(frozen=True)
 class SecretaryPersona:
     core: str
     listener_mode: str
@@ -37,25 +38,44 @@ _PERSONA_SECTIONS = {
 }
 
 
+_CANONICAL_HEADERS_NORMALIZED = {
+    # Collapse whitespace for near-miss comparison.
+    "".join(h.split()): h for h in _PERSONA_SECTIONS.values()
+}
+
+
 def load_persona(path: Path) -> SecretaryPersona:
     """Parse prompts/secretary.md into its five sections. Each section
-    starts with a fixed header. Missing any section is a hard error."""
+    starts with one of the canonical Chinese headers below; the header line
+    must match exactly (after stripping trailing whitespace). Lines starting
+    with '#' that look close to a canonical header but don't match exactly
+    raise ValueError with a suggestion — this catches missing-space and
+    dash-mismatch typos before they turn into confusing 'missing section'
+    errors."""
     text = path.read_text(encoding="utf-8")
     sections: dict[str, str] = {}
     lines = text.splitlines()
     current_key: str | None = None
     current_buf: list[str] = []
     header_to_key = {v: k for k, v in _PERSONA_SECTIONS.items()}
-    for line in lines:
+    for lineno, line in enumerate(lines, start=1):
         stripped = line.strip()
         if stripped in header_to_key:
             if current_key is not None:
                 sections[current_key] = "\n".join(current_buf).strip()
             current_key = header_to_key[stripped]
             current_buf = []
-        else:
-            if current_key is not None:
-                current_buf.append(line)
+            continue
+        if stripped.startswith("#"):
+            normalized = "".join(stripped.split())
+            if normalized in _CANONICAL_HEADERS_NORMALIZED:
+                canonical = _CANONICAL_HEADERS_NORMALIZED[normalized]
+                raise ValueError(
+                    f"{path}:{lineno}: malformed section header "
+                    f"{stripped!r}; expected exactly {canonical!r}"
+                )
+        if current_key is not None:
+            current_buf.append(line)
     if current_key is not None:
         sections[current_key] = "\n".join(current_buf).strip()
 
@@ -72,7 +92,7 @@ def load_persona(path: Path) -> SecretaryPersona:
     )
 
 
-@dataclass
+@dataclass(frozen=True)
 class SecretaryConfig:
     t_min_seconds: int
     n_min_messages: int
@@ -85,16 +105,25 @@ class SecretaryConfig:
 
 
 def load_config(path: Path) -> SecretaryConfig:
-    """Parse prompts/secretary.toml. Missing keys raise KeyError — fail
-    loud at startup rather than silently falling back to defaults."""
+    """Parse prompts/secretary.toml. Missing keys raise RuntimeError with
+    enough context to locate the offending file and key."""
     data = tomllib.loads(path.read_text(encoding="utf-8"))
+
+    def _require(section: str, key: str) -> Any:
+        try:
+            return data[section][key]
+        except KeyError as e:
+            raise RuntimeError(
+                f"missing config key {section}.{key} in {path}"
+            ) from e
+
     return SecretaryConfig(
-        t_min_seconds=int(data["cooldown"]["t_min_seconds"]),
-        n_min_messages=int(data["cooldown"]["n_min_messages"]),
-        l_min_weighted_chars=int(data["cooldown"]["l_min_weighted_chars"]),
-        transcript_window=int(data["context"]["transcript_window"]),
-        model=str(data["llm"]["model"]),
-        max_tokens_reply=int(data["llm"]["max_tokens_reply"]),
-        max_tokens_listener=int(data["llm"]["max_tokens_listener"]),
-        skip_sentinels=list(data["skip_sentinels"]["patterns"]),
+        t_min_seconds=int(_require("cooldown", "t_min_seconds")),
+        n_min_messages=int(_require("cooldown", "n_min_messages")),
+        l_min_weighted_chars=int(_require("cooldown", "l_min_weighted_chars")),
+        transcript_window=int(_require("context", "transcript_window")),
+        model=str(_require("llm", "model")),
+        max_tokens_reply=int(_require("llm", "max_tokens_reply")),
+        max_tokens_listener=int(_require("llm", "max_tokens_listener")),
+        skip_sentinels=list(_require("skip_sentinels", "patterns")),
     )
