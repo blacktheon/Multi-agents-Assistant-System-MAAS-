@@ -91,10 +91,18 @@ async def _run(settings: Settings) -> None:
     log.info("mention routing: %s", orch.username_to_agent)
 
     # Phase 2: start all pollers concurrently.
+    #
+    # drop_pending_updates=True tells Telegram to acknowledge any queued
+    # updates from prior bot runs without processing them. Without this,
+    # every restart replays stale updates from previous runs (including
+    # ones that previous crashed processes never confirmed), which
+    # silently double-feeds the orchestrator.
     async with asyncio.TaskGroup() as tg:
         for name, app in apps.items():
             assert app.updater is not None
-            tg.create_task(app.updater.start_polling())
+            tg.create_task(
+                app.updater.start_polling(drop_pending_updates=True)
+            )
             log.info("bot %s polling", name)
 
         # Run forever until cancelled.
