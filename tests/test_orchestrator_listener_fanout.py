@@ -54,8 +54,10 @@ def _uninstall_fake_secretary() -> None:
 
 @pytest.fixture
 def fake_secretary_slot():
-    yield
-    _uninstall_fake_secretary()
+    try:
+        yield
+    finally:
+        _uninstall_fake_secretary()
 
 
 @pytest.mark.asyncio

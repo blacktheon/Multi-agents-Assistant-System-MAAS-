@@ -270,7 +270,13 @@ class Orchestrator:
         focus_target: str,
     ) -> None:
         """Dispatch a listener_observation envelope to every listener
-        whose name is not `focus_target`. Sequential; errors propagate."""
+        whose name is not `focus_target`. Sequential; errors propagate.
+
+        INVARIANT: callers MUST NOT hold ``self.store.lock`` when invoking
+        this method. It acquires the lock internally for each sibling
+        insertion and reply emission; because ``asyncio.Lock`` is
+        non-reentrant, holding the lock on entry would deadlock silently.
+        """
         if original_user_envelope.source != "telegram_group":
             return
         assert original_user_envelope.id is not None
