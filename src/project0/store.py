@@ -101,6 +101,23 @@ class Store:
 
     def init_schema(self) -> None:
         self._conn.executescript(SCHEMA_SQL)
+        self._run_additive_migrations()
+
+    def _run_additive_migrations(self) -> None:
+        """Idempotent ALTER TABLE helpers. SQLite lacks 'ADD COLUMN IF NOT
+        EXISTS', so we catch OperationalError on duplicate-column errors."""
+        import sqlite3 as _sqlite
+        additive_columns: list[tuple[str, str, str]] = [
+            ("messages", "payload_json", "TEXT"),
+        ]
+        for table, col, coltype in additive_columns:
+            try:
+                self._conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {col} {coltype}"
+                )
+            except _sqlite.OperationalError as e:
+                if "duplicate column name" not in str(e):
+                    raise
 
     def agent_memory(self, agent_name: str) -> AgentMemory:
         return AgentMemory(self._conn, agent_name)
@@ -216,9 +233,10 @@ class MessagesStore:
                 """
                 INSERT INTO messages (
                     ts, source, telegram_chat_id, telegram_msg_id,
-                    from_kind, from_agent, to_agent, envelope_json, parent_id
+                    from_kind, from_agent, to_agent, envelope_json, parent_id,
+                    payload_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     env.ts,
@@ -230,6 +248,7 @@ class MessagesStore:
                     env.to_agent,
                     env.to_json(),
                     env.parent_id,
+                    json.dumps(env.payload) if env.payload is not None else None,
                 ),
             )
         except sqlite3.IntegrityError:
