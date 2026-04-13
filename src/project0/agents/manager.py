@@ -10,12 +10,24 @@ importing cleanly; Task 13 removes the stub once Manager is fully wired.
 
 from __future__ import annotations
 
+import json
+import logging
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from project0.calendar.errors import GoogleCalendarError
 from project0.envelope import AgentResult, Envelope
+from project0.llm.tools import ToolCall, ToolSpec
+
+if TYPE_CHECKING:
+    from project0.calendar.client import GoogleCalendar
+    from project0.llm.provider import LLMProvider
+    from project0.store import AgentMemory, MessagesStore
+
+log = logging.getLogger(__name__)
 
 
 # --- persona -----------------------------------------------------------------
@@ -128,6 +140,250 @@ def load_manager_config(path: Path) -> ManagerConfig:
         max_tool_iterations=int(_require("llm", "max_tool_iterations")),
         transcript_window=int(_require("context", "transcript_window")),
     )
+
+
+# --- per-turn state ----------------------------------------------------------
+
+@dataclass
+class TurnState:
+    """Mutable state for one agentic loop invocation. Lives in the local
+    scope of ``_agentic_loop`` so concurrent turns never cross-contaminate."""
+    delegation_target: str | None = None
+    delegation_handoff: str | None = None
+    delegation_payload: dict[str, Any] | None = None
+
+
+# --- tool input schemas ------------------------------------------------------
+
+_LIST_EVENTS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "time_min":    {"type": "string", "description": "ISO8601 start time (inclusive)"},
+        "time_max":    {"type": "string", "description": "ISO8601 end time (exclusive)"},
+        "max_results": {"type": "integer", "minimum": 1, "maximum": 250},
+    },
+    "required": ["time_min", "time_max"],
+}
+
+_CREATE_EVENT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "summary":     {"type": "string"},
+        "start":       {"type": "string", "description": "ISO8601 aware datetime"},
+        "end":         {"type": "string", "description": "ISO8601 aware datetime"},
+        "description": {"type": "string"},
+        "location":    {"type": "string"},
+    },
+    "required": ["summary", "start", "end"],
+}
+
+_UPDATE_EVENT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "event_id":    {"type": "string"},
+        "summary":     {"type": "string"},
+        "start":       {"type": "string"},
+        "end":         {"type": "string"},
+        "description": {"type": "string"},
+        "location":    {"type": "string"},
+    },
+    "required": ["event_id"],
+}
+
+_DELETE_EVENT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"event_id": {"type": "string"}},
+    "required": ["event_id"],
+}
+
+_DELEGATE_SECRETARY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "reminder_text": {"type": "string"},
+        "appointment":   {"type": "string"},
+        "when":          {"type": "string"},
+        "note":          {"type": "string"},
+    },
+    "required": ["reminder_text"],
+}
+
+_DELEGATE_INTEL_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"query": {"type": "string"}},
+    "required": ["query"],
+}
+
+
+# --- Manager class -----------------------------------------------------------
+
+class Manager:
+    def __init__(
+        self,
+        *,
+        llm: "LLMProvider | None",
+        calendar: "GoogleCalendar | None",
+        memory: "AgentMemory | None",
+        messages_store: "MessagesStore | None",
+        persona: ManagerPersona,
+        config: ManagerConfig,
+    ) -> None:
+        self._llm = llm
+        self._calendar = calendar
+        self._memory = memory
+        self._messages = messages_store
+        self._persona = persona
+        self._config = config
+        self._tool_specs = self._build_tool_specs()
+
+    def _build_tool_specs(self) -> list[ToolSpec]:
+        """Return the six tool specs advertised to the model."""
+        return [
+            ToolSpec(
+                name="calendar_list_events",
+                description="List calendar events within a time range.",
+                input_schema=_LIST_EVENTS_SCHEMA,
+            ),
+            ToolSpec(
+                name="calendar_create_event",
+                description="Create a new calendar event.",
+                input_schema=_CREATE_EVENT_SCHEMA,
+            ),
+            ToolSpec(
+                name="calendar_update_event",
+                description="Update an existing calendar event by ID.",
+                input_schema=_UPDATE_EVENT_SCHEMA,
+            ),
+            ToolSpec(
+                name="calendar_delete_event",
+                description="Delete a calendar event by ID.",
+                input_schema=_DELETE_EVENT_SCHEMA,
+            ),
+            ToolSpec(
+                name="delegate_to_secretary",
+                description=(
+                    "Hand off a reminder or appointment-related task to the Secretary agent."
+                ),
+                input_schema=_DELEGATE_SECRETARY_SCHEMA,
+            ),
+            ToolSpec(
+                name="delegate_to_intelligence",
+                description="Ask the Intelligence agent to answer a research or news query.",
+                input_schema=_DELEGATE_INTEL_SCHEMA,
+            ),
+        ]
+
+    async def _dispatch_tool(
+        self,
+        call: ToolCall,
+        turn_state: TurnState,
+    ) -> tuple[str, bool]:
+        """Execute one tool call and return (content_str, is_error).
+
+        On success ``is_error`` is False and ``content_str`` is JSON or a
+        plain string. On any known exception or unknown tool name,
+        ``is_error`` is True and ``content_str`` is a human-readable message.
+        """
+        try:
+            return await self._dispatch_tool_inner(call, turn_state)
+        except GoogleCalendarError as exc:
+            log.warning("calendar error in tool %s: %s", call.name, exc)
+            return str(exc), True
+        except (KeyError, ValueError, TypeError) as exc:
+            log.warning("input error in tool %s: %s", call.name, exc)
+            return f"invalid input for {call.name}: {exc}", True
+
+    async def _dispatch_tool_inner(
+        self,
+        call: ToolCall,
+        turn_state: TurnState,
+    ) -> tuple[str, bool]:
+        name = call.name
+        inp = call.input
+
+        if name == "calendar_list_events":
+            time_min = datetime.fromisoformat(inp["time_min"])
+            time_max = datetime.fromisoformat(inp["time_max"])
+            max_results = int(inp.get("max_results", 250))
+            events = await self._calendar.list_events(time_min, time_max, max_results)
+            result = [
+                {
+                    "id": e.id,
+                    "summary": e.summary,
+                    "start": e.start.isoformat(),
+                    "end": e.end.isoformat(),
+                    "all_day": e.all_day,
+                    "description": e.description,
+                    "location": e.location,
+                    "html_link": e.html_link,
+                }
+                for e in events
+            ]
+            return json.dumps(result, ensure_ascii=False), False
+
+        if name == "calendar_create_event":
+            summary = inp["summary"]
+            start = datetime.fromisoformat(inp["start"])
+            end = datetime.fromisoformat(inp["end"])
+            description = inp.get("description")
+            location = inp.get("location")
+            event = await self._calendar.create_event(
+                summary, start, end, description, location
+            )
+            result = {
+                "id": event.id,
+                "summary": event.summary,
+                "start": event.start.isoformat(),
+                "end": event.end.isoformat(),
+                "html_link": event.html_link,
+            }
+            return json.dumps(result, ensure_ascii=False), False
+
+        if name == "calendar_update_event":
+            event_id = inp["event_id"]
+            start = datetime.fromisoformat(inp["start"]) if "start" in inp else None
+            end = datetime.fromisoformat(inp["end"]) if "end" in inp else None
+            event = await self._calendar.update_event(
+                event_id,
+                summary=inp.get("summary"),
+                start=start,
+                end=end,
+                description=inp.get("description"),
+                location=inp.get("location"),
+            )
+            result = {
+                "id": event.id,
+                "summary": event.summary,
+                "start": event.start.isoformat(),
+                "end": event.end.isoformat(),
+                "html_link": event.html_link,
+            }
+            return json.dumps(result, ensure_ascii=False), False
+
+        if name == "calendar_delete_event":
+            event_id = inp["event_id"]
+            await self._calendar.delete_event(event_id)
+            return json.dumps({"deleted": event_id}), False
+
+        if name == "delegate_to_secretary":
+            reminder_text = inp["reminder_text"]
+            turn_state.delegation_target = "secretary"
+            turn_state.delegation_handoff = reminder_text
+            turn_state.delegation_payload = {
+                "kind": "reminder_request",
+                "appointment": inp.get("appointment"),
+                "when": inp.get("when"),
+                "note": inp.get("note"),
+            }
+            return "delegated", False
+
+        if name == "delegate_to_intelligence":
+            query = inp["query"]
+            turn_state.delegation_target = "intelligence"
+            turn_state.delegation_handoff = query
+            turn_state.delegation_payload = {"kind": "query", "query": query}
+            return "delegated", False
+
+        return f"unknown tool: {name}", True
 
 
 # --- placeholder stub (removed in Task 14) -----------------------------------
