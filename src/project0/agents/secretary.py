@@ -14,10 +14,17 @@ prompts/secretary.toml. Both are loaded once at startup.
 
 from __future__ import annotations
 
+import logging
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from project0.envelope import AgentResult, Envelope
+from project0.llm.provider import LLMProvider
+from project0.store import AgentMemory, MessagesStore
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -173,3 +180,60 @@ def is_skip_sentinel(text: str, sentinels: list[str]) -> bool:
             if not tail or not tail[0].isalnum():
                 return True
     return False
+
+
+class Secretary:
+    """First real LLM-backed agent. Dispatches on Envelope.routing_reason.
+
+    Returns AgentResult for paths that reply, or None for paths that do
+    nothing (listener path decided to stay silent, cooldown not open, etc).
+    The orchestrator treats None as 'observed, no outbound action'.
+    """
+
+    def __init__(
+        self,
+        *,
+        llm: LLMProvider,
+        memory: AgentMemory,
+        messages_store: MessagesStore,
+        persona: SecretaryPersona,
+        config: SecretaryConfig,
+    ) -> None:
+        self._llm = llm
+        self._memory = memory
+        self._messages = messages_store
+        self._persona = persona
+        self._config = config
+
+    async def handle(self, env: Envelope) -> AgentResult | None:
+        reason = env.routing_reason
+
+        if reason == "listener_observation":
+            return await self._handle_listener(env)
+        if reason in ("mention", "focus"):
+            return await self._handle_addressed(env)
+        if reason == "direct_dm":
+            return await self._handle_dm(env)
+        if reason == "manager_delegation":
+            if env.payload and env.payload.get("kind") == "reminder_request":
+                return await self._handle_reminder(env)
+            log.warning(
+                "secretary: manager_delegation without reminder_request payload"
+            )
+            return None
+
+        log.debug("secretary: ignoring routing_reason=%s", reason)
+        return None
+
+    # Path handlers are implemented in later tasks. For now they return None.
+    async def _handle_listener(self, env: Envelope) -> AgentResult | None:
+        return None
+
+    async def _handle_addressed(self, env: Envelope) -> AgentResult | None:
+        return None
+
+    async def _handle_dm(self, env: Envelope) -> AgentResult | None:
+        return None
+
+    async def _handle_reminder(self, env: Envelope) -> AgentResult | None:
+        return None

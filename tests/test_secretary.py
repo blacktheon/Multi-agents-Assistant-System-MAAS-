@@ -160,3 +160,70 @@ def test_is_skip_sentinel_negative_cases() -> None:
     assert not is_skip_sentinel("嘿你今天怎么这么努力", sentinels)
     assert not is_skip_sentinel("", sentinels)
     assert not is_skip_sentinel("no skip here", sentinels)
+
+
+@pytest.mark.asyncio
+async def test_secretary_returns_noop_for_unknown_routing_reason(tmp_path: Path) -> None:
+    from project0.agents.secretary import Secretary
+    from project0.envelope import Envelope
+    from project0.llm.provider import FakeProvider
+    from project0.store import Store
+
+    store = Store(tmp_path / "t.db")
+    store.init_schema()
+
+    persona = _build_trivial_persona()
+    config = _build_trivial_config()
+    llm = FakeProvider(responses=[])  # should not be called
+
+    sec = Secretary(
+        llm=llm,
+        memory=store.agent_memory("secretary"),
+        messages_store=store.messages(),
+        persona=persona,
+        config=config,
+    )
+
+    env = Envelope(
+        id=1,
+        ts="2026-04-13T12:00:00Z",
+        parent_id=None,
+        source="telegram_group",
+        telegram_chat_id=123,
+        telegram_msg_id=1,
+        received_by_bot="secretary",
+        from_kind="user",
+        from_agent=None,
+        to_agent="secretary",
+        body="hi",
+        routing_reason="default_manager",  # NOT a reason Secretary handles
+    )
+    result = await sec.handle(env)
+    assert result is None
+    assert len(llm.calls) == 0
+
+
+# Helpers used by many Secretary tests.
+def _build_trivial_persona():
+    from project0.agents.secretary import SecretaryPersona
+    return SecretaryPersona(
+        core="CORE",
+        listener_mode="LISTENER",
+        group_addressed_mode="ADDRESSED",
+        dm_mode="DM",
+        reminder_mode="REMINDER",
+    )
+
+
+def _build_trivial_config():
+    from project0.agents.secretary import SecretaryConfig
+    return SecretaryConfig(
+        t_min_seconds=60,
+        n_min_messages=3,
+        l_min_weighted_chars=100,
+        transcript_window=20,
+        model="claude-sonnet-4-6",
+        max_tokens_reply=800,
+        max_tokens_listener=400,
+        skip_sentinels=["[skip]", "[跳过]"],
+    )
