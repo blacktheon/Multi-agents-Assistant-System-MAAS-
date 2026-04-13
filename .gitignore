@@ -24,3 +24,6 @@ venv/
 .vscode/
 *.swp
 .DS_Store
+
+# Google Calendar (6b) — ad-hoc fixture captures that should not land in the repo
+tests/fixtures/google_calendar/*.local.json
