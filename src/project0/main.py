@@ -11,11 +11,15 @@ import logging
 import os
 from pathlib import Path
 
-from project0.agents.registry import AGENT_SPECS, register_secretary
+from project0.agents.manager import Manager, load_manager_config, load_manager_persona
+from project0.agents.registry import AGENT_SPECS, register_manager, register_secretary
 from project0.agents.secretary import Secretary, load_config, load_persona
+from project0.calendar.auth import load_or_acquire_credentials
+from project0.calendar.client import GoogleCalendar
 from project0.config import Settings, load_settings
 from project0.llm.provider import AnthropicProvider, FakeProvider, LLMProvider
 from project0.orchestrator import Orchestrator
+from project0.pulse import load_pulse_entries, run_pulse_loop
 from project0.store import Store
 from project0.telegram_io import (
     FakeBotSender,
@@ -81,6 +85,45 @@ async def _run(settings: Settings) -> None:
     register_secretary(secretary.handle)
     log.info("secretary registered (model=%s)", secretary_cfg.model)
 
+    # Google Calendar client (shared; used by Manager and any future
+    # calendar-using agent). Loads credentials via the installed-app flow
+    # on first run, cached in settings.google_token_path thereafter.
+    calendar_creds = load_or_acquire_credentials(
+        token_path=settings.google_token_path,
+        client_secrets_path=settings.google_client_secrets_path,
+    )
+    calendar = GoogleCalendar(
+        credentials=calendar_creds,
+        calendar_id=settings.google_calendar_id,
+        user_tz=settings.user_tz,
+    )
+    log.info(
+        "google calendar ready (calendar_id=%s tz=%s)",
+        settings.google_calendar_id, settings.user_tz.key,
+    )
+
+    # Manager (replaces the legacy stub that used to live in
+    # AGENT_REGISTRY at import time).
+    manager_persona = load_manager_persona(Path("prompts/manager.md"))
+    manager_cfg = load_manager_config(Path("prompts/manager.toml"))
+    manager = Manager(
+        llm=llm,
+        calendar=calendar,
+        memory=store.agent_memory("manager"),
+        messages_store=store.messages(),
+        persona=manager_persona,
+        config=manager_cfg,
+    )
+    register_manager(manager.handle)
+    log.info("manager registered (model=%s)", manager_cfg.model)
+
+    # Pulse scheduler entries for Manager.
+    pulse_entries = load_pulse_entries(Path("prompts/manager.toml"))
+    log.info(
+        "manager pulse entries: %s",
+        [(e.name, e.every_seconds) for e in pulse_entries],
+    )
+
     # Sanity-check that every registered agent has a token.
     for agent_name in AGENT_SPECS:
         if agent_name not in settings.bot_tokens:
@@ -135,6 +178,16 @@ async def _run(settings: Settings) -> None:
                 app.updater.start_polling(drop_pending_updates=True)
             )
             log.info("bot %s polling", name)
+
+        for entry in pulse_entries:
+            tg.create_task(
+                run_pulse_loop(
+                    entry=entry,
+                    target_agent="manager",
+                    orchestrator=orch,
+                )
+            )
+            log.info("pulse task spawned: %s", entry.name)
 
         # Run forever until cancelled.
         stop_event = asyncio.Event()
