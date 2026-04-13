@@ -294,6 +294,17 @@ def test_update_event_partial_only_patches_provided_fields() -> None:
     }
 
 
+def test_delete_event_returns_none_on_success() -> None:
+    # Google returns an empty body with status 204 on successful delete.
+    client = build_test_client([({"status": "204"}, b"")])
+
+    async def run() -> None:
+        await client.delete_event("abc123def456")
+
+    result = asyncio.run(run())
+    assert result is None
+
+
 def test_auth_writes_token_chmod_600(tmp_path: Path) -> None:
     # We call the private helper directly: the full flow requires a real
     # Google consent dance and cannot be unit-tested. The chmod step is

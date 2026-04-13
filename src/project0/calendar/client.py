@@ -192,6 +192,24 @@ class GoogleCalendar:
             ) from e
         return raw_event_to_model(raw, self._user_tz)
 
+    async def delete_event(self, event_id: str) -> None:
+        await asyncio.to_thread(self._sync_delete_event, event_id)
+
+    def _sync_delete_event(self, event_id: str) -> None:
+        try:
+            self._service.events().delete(
+                calendarId=self._calendar_id,
+                eventId=event_id,
+            ).execute()
+        except HttpError as e:
+            raise GoogleCalendarError(
+                f"delete_event({event_id!r}) failed: HTTP {e.resp.status}"
+            ) from e
+        except Exception as e:  # noqa: BLE001
+            raise GoogleCalendarError(
+                f"delete_event({event_id!r}) failed: {e}"
+            ) from e
+
     async def get_event(self, event_id: str) -> CalendarEvent:
         return await asyncio.to_thread(self._sync_get_event, event_id)
 
