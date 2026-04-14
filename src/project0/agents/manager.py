@@ -506,20 +506,15 @@ class Manager:
         is_pulse: bool,
     ) -> AgentResult | None:
         assert self._llm is not None
-        try:
-            loop = await run_agentic_loop(
-                llm=self._llm,
-                system=system,
-                initial_user_text=initial_user_text,
-                tools=self._tool_specs,
-                dispatch_tool=self._dispatch_tool,
-                max_iterations=self._config.max_tool_iterations,
-                max_tokens=max_tokens,
-            )
-        except LLMProviderError:
-            raise LLMProviderError(
-                f"manager exceeded max_tool_iterations={self._config.max_tool_iterations}"
-            )
+        loop = await run_agentic_loop(
+            llm=self._llm,
+            system=system,
+            initial_user_text=initial_user_text,
+            tools=self._tool_specs,
+            dispatch_tool=self._dispatch_tool,
+            max_iterations=self._config.max_tool_iterations,
+            max_tokens=max_tokens,
+        )
         if loop.errored:
             return None
 

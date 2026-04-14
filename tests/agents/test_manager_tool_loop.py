@@ -156,7 +156,7 @@ async def test_max_iterations_raises():
     cal.list_events = AsyncMock(return_value=[])
     mgr = _mgr(fake, calendar=cal, messages_store=_FakeMessagesStore())
 
-    with pytest.raises(LLMProviderError, match="max_tool_iterations"):
+    with pytest.raises(LLMProviderError, match="max_iterations"):
         await mgr.handle(_env_dm("loop forever"))
 
 
