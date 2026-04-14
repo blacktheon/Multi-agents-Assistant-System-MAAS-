@@ -5,16 +5,17 @@ from __future__ import annotations
 import json
 import logging
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
+from project0.agents._tool_loop import LoopResult, TurnState, run_agentic_loop  # re-exported for tests
 from project0.calendar.errors import GoogleCalendarError
 from project0.envelope import AgentResult, Envelope
-from project0.llm.provider import LLMProviderError, Msg
-from project0.llm.tools import AssistantToolUseMsg, ToolCall, ToolResultMsg, ToolSpec, ToolUseResult
+from project0.llm.provider import LLMProviderError
+from project0.llm.tools import ToolCall, ToolSpec
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -136,17 +137,6 @@ def load_manager_config(path: Path) -> ManagerConfig:
         max_tool_iterations=int(_require("llm", "max_tool_iterations")),
         transcript_window=int(_require("context", "transcript_window")),
     )
-
-
-# --- per-turn state ----------------------------------------------------------
-
-@dataclass
-class TurnState:
-    """Mutable state for one agentic loop invocation. Lives in the local
-    scope of ``_agentic_loop`` so concurrent turns never cross-contaminate."""
-    delegation_target: str | None = None
-    delegation_handoff: str | None = None
-    delegation_payload: dict[str, Any] | None = None
 
 
 # --- tool input schemas ------------------------------------------------------
@@ -516,62 +506,43 @@ class Manager:
         is_pulse: bool,
     ) -> AgentResult | None:
         assert self._llm is not None
-        turn_state = TurnState()
-        messages: list = [Msg(role="user", content=initial_user_text)]
-
-        for _iter in range(self._config.max_tool_iterations):
-            try:
-                result = await self._llm.complete_with_tools(
-                    system=system,
-                    messages=messages,
-                    tools=self._tool_specs,
-                    max_tokens=max_tokens,
-                )
-            except LLMProviderError as e:
-                log.warning("manager LLM call failed: %s", e)
-                return None
-
-            if result.kind == "text":
-                if turn_state.delegation_target is not None:
-                    # Delegation queued: suppress the trailing text, return as delegation.
-                    return AgentResult(
-                        reply_text=None,
-                        delegate_to=turn_state.delegation_target,
-                        handoff_text=turn_state.delegation_handoff,
-                        delegation_payload=turn_state.delegation_payload,
-                    )
-                # Pulse path: a plain-text result means "nothing to do". Return
-                # None so the orchestrator does NOT emit a visible Telegram
-                # message. The pulse envelope itself is already persisted by
-                # handle_pulse as the audit trail; Manager's internal reasoning
-                # does not need to reach the user.
-                if is_pulse:
-                    return None
-                final_text = result.text or ""
-                return AgentResult(
-                    reply_text=final_text,
-                    delegate_to=None,
-                    handoff_text=None,
-                )
-
-            # tool_use branch
-            messages.append(
-                AssistantToolUseMsg(
-                    tool_calls=list(result.tool_calls),
-                    text=result.text,
-                )
+        try:
+            loop = await run_agentic_loop(
+                llm=self._llm,
+                system=system,
+                initial_user_text=initial_user_text,
+                tools=self._tool_specs,
+                dispatch_tool=self._dispatch_tool,
+                max_iterations=self._config.max_tool_iterations,
+                max_tokens=max_tokens,
             )
-            for call in result.tool_calls:
-                content_str, is_err = await self._dispatch_tool(call, turn_state)
-                messages.append(
-                    ToolResultMsg(
-                        tool_use_id=call.id,
-                        content=content_str,
-                        is_error=is_err,
-                    )
-                )
+        except LLMProviderError:
+            raise LLMProviderError(
+                f"manager exceeded max_tool_iterations={self._config.max_tool_iterations}"
+            )
+        if loop.errored:
+            return None
 
-        raise LLMProviderError(
-            f"manager exceeded max_tool_iterations={self._config.max_tool_iterations}"
+        turn_state = loop.turn_state
+        if turn_state.delegation_target is not None:
+            # Delegation queued: suppress the trailing text, return as delegation.
+            return AgentResult(
+                reply_text=None,
+                delegate_to=turn_state.delegation_target,
+                handoff_text=turn_state.delegation_handoff,
+                delegation_payload=turn_state.delegation_payload,
+            )
+
+        # Pulse path: a plain-text result means "nothing to do". Return None so
+        # the orchestrator does NOT emit a visible Telegram message. The pulse
+        # envelope itself is already persisted by handle_pulse as the audit
+        # trail; Manager's internal reasoning does not need to reach the user.
+        if is_pulse:
+            return None
+
+        return AgentResult(
+            reply_text=loop.final_text or "",
+            delegate_to=None,
+            handoff_text=None,
         )
 
