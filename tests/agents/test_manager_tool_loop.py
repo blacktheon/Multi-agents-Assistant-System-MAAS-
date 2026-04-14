@@ -201,6 +201,61 @@ async def test_pulse_path_returns_none_on_nonempty_text_without_delegation():
 
 
 @pytest.mark.asyncio
+async def test_preamble_predawn_tomorrow_is_today_from_7am():
+    """At 00:45 local time the user is still in last night's tail, so
+    「明天」should resolve to today's calendar date from 07:00, not the
+    next calendar date. The preamble must contain those literal strings
+    so the model can't compute a different window from its training prior.
+    """
+    fake = FakeProvider(tool_responses=[
+        ToolUseResult(kind="text", text="ok", tool_calls=[], stop_reason="end_turn"),
+    ])
+    # 00:45 Shanghai = 16:45 UTC the previous day
+    predawn = datetime(2026, 4, 14, 16, 45, tzinfo=UTC)
+    mgr = _mgr(
+        fake,
+        messages_store=_FakeMessagesStore(),
+        clock=lambda: predawn,
+        user_tz=ZoneInfo("Asia/Shanghai"),
+    )
+
+    await mgr.handle(_env_dm("明天我都有什么活动"))
+
+    user_text = fake.tool_calls_log[0]["messages"][0].content
+    # Pre-dawn → "明天" resolves to today's calendar date (2026-04-15)
+    # from 07:00, NOT 2026-04-16.
+    assert "2026-04-15 00:45" in user_text  # current time
+    assert "「明天」= 2026-04-15 07:00" in user_text
+    assert "2026-04-16" not in user_text
+    # Preamble carries the pre-dawn note.
+    assert "昨晚的延长线" in user_text
+
+
+@pytest.mark.asyncio
+async def test_preamble_daytime_tomorrow_is_next_calendar_day():
+    """At 10:00 local time '明天' resolves to the next calendar date
+    from 07:00, the normal case."""
+    fake = FakeProvider(tool_responses=[
+        ToolUseResult(kind="text", text="ok", tool_calls=[], stop_reason="end_turn"),
+    ])
+    # 10:00 Shanghai = 02:00 UTC same day
+    daytime = datetime(2026, 4, 15, 2, 0, tzinfo=UTC)
+    mgr = _mgr(
+        fake,
+        messages_store=_FakeMessagesStore(),
+        clock=lambda: daytime,
+        user_tz=ZoneInfo("Asia/Shanghai"),
+    )
+
+    await mgr.handle(_env_dm("明天我都有什么活动"))
+
+    user_text = fake.tool_calls_log[0]["messages"][0].content
+    assert "2026-04-15 10:00" in user_text
+    assert "「明天」= 2026-04-16 07:00" in user_text
+    assert "昨晚的延长线" not in user_text
+
+
+@pytest.mark.asyncio
 async def test_initial_user_text_includes_current_time_preamble():
     """Chat turns must include a 'current time' preamble so the model
     doesn't hallucinate 'tomorrow' based on its training cutoff."""

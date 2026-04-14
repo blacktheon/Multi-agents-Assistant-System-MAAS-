@@ -242,12 +242,50 @@ class Manager:
         return datetime.now(UTC).astimezone(self._user_tz)
 
     def _current_time_preamble(self) -> str:
+        """Give the model an unambiguous clock plus pre-computed '今天' and
+        '明天' windows so it doesn't have to reason about the sleep-based
+        time-word rule. The rule: before 07:00, the user is still in last
+        night's tail, so '明天' means today's calendar date from 07:00; at
+        07:00 and later it means the next calendar date from 07:00."""
         now = self._now_local()
         weekday_zh = "一二三四五六日"[now.weekday()]
-        return (
-            f"当前时间：{now.strftime('%Y-%m-%d %H:%M')} "
-            f"星期{weekday_zh}（{self._user_tz.key}）"
-        )
+
+        if now.hour < 7:
+            # Pre-dawn: we're still "last night". Today's waking day is
+            # today's date from 07:00 onward; tomorrow is still ahead of us.
+            today_date = now.date()
+            tomorrow_date = today_date  # "next waking day" is today's date
+            tomorrow_shift = 0
+            tail_note = "（现在还不到 07:00，你还在昨晚的延长线上）"
+        else:
+            today_date = now.date()
+            tomorrow_date = today_date
+            tomorrow_shift = 1
+            tail_note = ""
+
+        today_start = now
+        today_end = now.replace(hour=23, minute=59, second=59, microsecond=0)
+        from datetime import timedelta
+        tmr_start = now.replace(hour=7, minute=0, second=0, microsecond=0) + timedelta(days=tomorrow_shift)
+        tmr_end = now.replace(hour=23, minute=59, second=59, microsecond=0) + timedelta(days=tomorrow_shift)
+
+        def _fmt(dt: datetime) -> str:
+            return dt.strftime("%Y-%m-%d %H:%M")
+
+        def _iso(dt: datetime) -> str:
+            return dt.isoformat()
+
+        lines = [
+            f"当前时间：{now.strftime('%Y-%m-%d %H:%M')} 星期{weekday_zh}（{self._user_tz.key}）",
+            f"「今天」= 从现在到今天 23:59：{_fmt(today_start)} 至 {_fmt(today_end)}",
+            f"  · time_min = {_iso(today_start)}",
+            f"  · time_max = {_iso(today_end)}",
+            f"「明天」= {_fmt(tmr_start)} 至 {_fmt(tmr_end)}{tail_note}",
+            f"  · time_min = {_iso(tmr_start)}",
+            f"  · time_max = {_iso(tmr_end)}",
+            "查日历时，用户说「今天」就用上面「今天」的 time_min/time_max，说「明天」就用「明天」的。别自己另算一个窗口。",
+        ]
+        return "\n".join(lines)
 
     def _build_tool_specs(self) -> list[ToolSpec]:
         """Return the six tool specs advertised to the model."""
