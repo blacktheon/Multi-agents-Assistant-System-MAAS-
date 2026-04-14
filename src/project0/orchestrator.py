@@ -18,7 +18,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from project0.agents.registry import AGENT_REGISTRY, LISTENER_REGISTRY
+from project0.agents.registry import AGENT_REGISTRY, LISTENER_REGISTRY, PULSE_REGISTRY
 from project0.envelope import Envelope, RoutingReason
 from project0.errors import RoutingError
 from project0.mentions import parse_mentions
@@ -136,15 +136,13 @@ class Orchestrator:
             if target not in AGENT_REGISTRY:
                 raise RoutingError(f"unknown delegation target: {target!r}")
 
-            # (a) Visible handoff message — persisted as outbound_reply child
-            #     of the original user envelope, then dispatched via Manager's bot.
-            await self._emit_reply(
-                parent=persisted,
-                speaker="manager",
-                text=result.handoff_text,
-            )
-
-            # (b) Internal forward envelope — child of the original user envelope.
+            # (a) Internal forward envelope — child of the original user
+            #     envelope. We deliberately do NOT emit Manager's handoff_text
+            #     to Telegram: the target agent (Secretary, Intelligence) will
+            #     reply in its own voice, and a visible "forwarding to..."
+            #     line from Manager is redundant noise in the group chat.
+            #     The handoff_text is still kept on AgentResult for internal
+            #     logging and for tests that need to assert on it.
             internal = Envelope(
                 id=None,
                 ts=_utc_now_iso(),
@@ -211,7 +209,12 @@ class Orchestrator:
             persisted = self.store.messages().insert(pulse_env)
             assert persisted is not None  # pulse envelopes never collide (no msg_id)
 
-        agent_fn = AGENT_REGISTRY[persisted.to_agent]
+        # Dispatch via PULSE_REGISTRY (raw, un-adapted handler) so that a
+        # None return propagates as "nothing to do" instead of being
+        # inflated into a fail-visible fallback reply by the AGENT_REGISTRY
+        # adapter. The pulse envelope itself is already persisted above,
+        # so the audit trail is intact even when Manager stays silent.
+        agent_fn = PULSE_REGISTRY[persisted.to_agent]
         result = await agent_fn(persisted)
 
         if result is None:
@@ -235,12 +238,9 @@ class Orchestrator:
             if target not in AGENT_REGISTRY:
                 raise RoutingError(f"unknown delegation target: {target!r}")
 
-            await self._emit_reply(
-                parent=persisted,
-                speaker="manager",
-                text=result.handoff_text,
-            )
-
+            # Manager's handoff_text is NOT emitted to Telegram for pulse
+            # delegations either — only the target agent's reply reaches
+            # the user. See handle() above for the same rationale.
             internal = Envelope(
                 id=None,
                 ts=_utc_now_iso(),

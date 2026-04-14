@@ -147,31 +147,28 @@ async def test_allowlist_rejects_unknown_user(
 
 
 @pytest.mark.asyncio
-async def test_manager_delegation_produces_four_envelopes(
+async def test_manager_delegation_produces_three_envelopes(
     orchestrator: tuple[Orchestrator, FakeBotSender], store: Store
 ) -> None:
     orch, sender = orchestrator
     await orch.handle(_update(msg_id=10, text="any news today?"))
 
-    # Two outbound sends: (a) Manager's visible handoff, (b) Intelligence's reply.
+    # Only one outbound send: Intelligence's reply. Manager's handoff_text
+    # is intentionally not emitted to Telegram — the delegate target speaks
+    # for itself, Manager staying visibly silent keeps the group chat clean.
     agents_sent_by = [s["agent"] for s in sender.sent]
-    assert agents_sent_by == ["manager", "intelligence"]
-    assert "@intelligence" in sender.sent[0]["text"]  # type: ignore[operator]
-    assert "[intelligence-stub]" in sender.sent[1]["text"]  # type: ignore[operator]
+    assert agents_sent_by == ["intelligence"]
+    assert "[intelligence-stub]" in sender.sent[0]["text"]  # type: ignore[operator]
 
-    # Four rows in messages: user → manager, manager → user (handoff),
-    # manager → intelligence (internal), intelligence → user (reply).
+    # Three rows in messages: user → manager, manager → intelligence
+    # (internal), intelligence → user (reply). No handoff envelope.
     rows = store.conn.execute("SELECT * FROM messages ORDER BY id ASC").fetchall()
-    assert len(rows) == 4
+    assert len(rows) == 3
 
-    user_row, handoff_row, internal_row, intel_reply_row = rows
+    user_row, internal_row, intel_reply_row = rows
 
     assert user_row["from_kind"] == "user"
     assert user_row["to_agent"] == "manager"
-
-    assert handoff_row["from_agent"] == "manager"
-    assert handoff_row["to_agent"] == "user"
-    assert handoff_row["parent_id"] == user_row["id"]
 
     assert internal_row["from_agent"] == "manager"
     assert internal_row["to_agent"] == "intelligence"

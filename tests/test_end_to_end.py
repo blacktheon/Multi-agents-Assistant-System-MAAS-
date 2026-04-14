@@ -67,9 +67,11 @@ async def test_news_flow_produces_exact_envelope_tree(store: Store) -> None:
     )
 
     # --- outbound dispatch assertions ---
-    assert [s["agent"] for s in sender.sent] == ["manager", "intelligence"]
-    assert sender.sent[0]["text"] == "→ forwarding to @intelligence"
-    assert sender.sent[1]["text"] == "[intelligence-stub] acknowledged: any news today?"
+    # Only Intelligence sends a visible message. Manager's handoff_text
+    # is intentionally not emitted to Telegram: the delegate target
+    # speaks for itself.
+    assert [s["agent"] for s in sender.sent] == ["intelligence"]
+    assert sender.sent[0]["text"] == "[intelligence-stub] acknowledged: any news today?"
 
     # --- messages table assertions ---
     rows = list(
@@ -78,9 +80,9 @@ async def test_news_flow_produces_exact_envelope_tree(store: Store) -> None:
             "FROM messages ORDER BY id ASC"
         ).fetchall()
     )
-    assert len(rows) == 4
+    assert len(rows) == 3
 
-    user_row, handoff_row, internal_row, intel_reply_row = rows
+    user_row, internal_row, intel_reply_row = rows
 
     # Envelope #1: user → manager
     assert (user_row["source"], user_row["from_kind"], user_row["to_agent"]) == (
@@ -90,19 +92,13 @@ async def test_news_flow_produces_exact_envelope_tree(store: Store) -> None:
     )
     assert user_row["parent_id"] is None
 
-    # Envelope #2: manager → user (visible handoff)
-    assert handoff_row["from_agent"] == "manager"
-    assert handoff_row["to_agent"] == "user"
-    assert handoff_row["source"] == "internal"
-    assert handoff_row["parent_id"] == user_row["id"]
-
-    # Envelope #3: manager → intelligence (internal forward)
+    # Envelope #2: manager → intelligence (internal forward)
     assert internal_row["from_agent"] == "manager"
     assert internal_row["to_agent"] == "intelligence"
     assert internal_row["source"] == "internal"
     assert internal_row["parent_id"] == user_row["id"]
 
-    # Envelope #4: intelligence → user
+    # Envelope #3: intelligence → user
     assert intel_reply_row["from_agent"] == "intelligence"
     assert intel_reply_row["to_agent"] == "user"
     assert intel_reply_row["source"] == "internal"

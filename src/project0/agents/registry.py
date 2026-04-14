@@ -42,6 +42,15 @@ LISTENER_REGISTRY: dict[str, ListenerFn] = {
     # "secretary" installed by register_secretary(...) in main.py.
 }
 
+# Raw, *un-adapted* optional-return handlers used by ``handle_pulse``. The
+# AGENT_REGISTRY adapters convert None → a fail-visible fallback reply so
+# that a silent chat turn still produces something the user can see. For
+# pulses, None means "nothing urgent, stay silent" — that must propagate
+# unchanged, so pulse dispatch bypasses the adapter via this registry.
+PULSE_REGISTRY: dict[str, ListenerFn] = {
+    # "manager" installed by register_manager(...) in main.py.
+}
+
 AGENT_SPECS: dict[str, AgentSpec] = {
     "manager": AgentSpec(name="manager", token_env_key="TELEGRAM_BOT_TOKEN_MANAGER"),
     "intelligence": AgentSpec(
@@ -71,6 +80,7 @@ def register_manager(handle: AgentOptionalFn) -> None:
         return result
 
     AGENT_REGISTRY["manager"] = agent_adapter
+    PULSE_REGISTRY["manager"] = handle
 
 
 def register_secretary(handle: ListenerFn) -> None:

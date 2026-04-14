@@ -15,6 +15,6 @@ transcript_window = 20
 # delegate user-facing messages (otherwise the reminder has nowhere to go).
 [[pulse]]
 name         = "check_calendar"
-every_seconds = 300
+every_seconds = 30
 chat_id_env  = "MANAGER_PULSE_CHAT_ID"
 payload      = { window_minutes = 60 }
