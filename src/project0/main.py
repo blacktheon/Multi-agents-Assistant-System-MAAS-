@@ -113,6 +113,7 @@ async def _run(settings: Settings) -> None:
         messages_store=store.messages(),
         persona=manager_persona,
         config=manager_cfg,
+        user_tz=settings.user_tz,
     )
     register_manager(manager.handle)
     log.info("manager registered (model=%s)", manager_cfg.model)

@@ -1,5 +1,7 @@
 # tests/agents/test_manager_tool_loop.py
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -27,10 +29,12 @@ def _config(max_iter=4):
     )
 
 
-def _mgr(llm, calendar=None, messages_store=None):
+def _mgr(llm, calendar=None, messages_store=None, clock=None, user_tz=None):
     return Manager(
         llm=llm, calendar=calendar, memory=None,
         messages_store=messages_store, persona=_persona(), config=_config(),
+        user_tz=user_tz or ZoneInfo("UTC"),
+        clock=clock,
     )
 
 
@@ -174,3 +178,50 @@ async def test_unknown_routing_reason_returns_none():
     env = _env_dm()
     env.routing_reason = "listener_observation"
     assert await mgr.handle(env) is None
+
+
+@pytest.mark.asyncio
+async def test_pulse_path_returns_none_on_nonempty_text_without_delegation():
+    """Pulse mode: any plain-text result (including non-empty) must return
+    None so the orchestrator does NOT emit a visible Telegram message. The
+    pulse envelope is already persisted by handle_pulse as the audit trail.
+    Only a queued delegation should cause a visible outbound message."""
+    fake = FakeProvider(tool_responses=[
+        ToolUseResult(
+            kind="text",
+            text="未来 60 分钟无事",
+            tool_calls=[],
+            stop_reason="end_turn",
+        ),
+    ])
+    mgr = _mgr(fake, messages_store=_FakeMessagesStore())
+
+    result = await mgr.handle(_env_pulse())
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_initial_user_text_includes_current_time_preamble():
+    """Chat turns must include a 'current time' preamble so the model
+    doesn't hallucinate 'tomorrow' based on its training cutoff."""
+    fake = FakeProvider(tool_responses=[
+        ToolUseResult(kind="text", text="ok", tool_calls=[], stop_reason="end_turn"),
+    ])
+    fixed_now = datetime(2026, 4, 14, 16, 30, tzinfo=UTC)
+    mgr = _mgr(
+        fake,
+        messages_store=_FakeMessagesStore(),
+        clock=lambda: fixed_now,
+        user_tz=ZoneInfo("Asia/Shanghai"),
+    )
+
+    await mgr.handle(_env_dm("你好"))
+
+    assert len(fake.tool_calls_log) == 1
+    initial_msgs = fake.tool_calls_log[0]["messages"]
+    user_text = initial_msgs[0].content
+    assert "当前时间" in user_text
+    # fixed_now = 16:30 UTC → 00:30 on 2026-04-15 Asia/Shanghai
+    assert "2026-04-15" in user_text
+    assert "00:30" in user_text
+    assert "Asia/Shanghai" in user_text

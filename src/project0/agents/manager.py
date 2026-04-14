@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo
 
 from project0.calendar.errors import GoogleCalendarError
 from project0.envelope import AgentResult, Envelope
@@ -16,6 +17,8 @@ from project0.llm.provider import LLMProviderError, Msg
 from project0.llm.tools import AssistantToolUseMsg, ToolCall, ToolResultMsg, ToolSpec, ToolUseResult
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from project0.calendar.client import GoogleCalendar
     from project0.llm.provider import LLMProvider
     from project0.store import AgentMemory, MessagesStore
@@ -219,6 +222,8 @@ class Manager:
         messages_store: "MessagesStore | None",
         persona: ManagerPersona,
         config: ManagerConfig,
+        user_tz: ZoneInfo = ZoneInfo("UTC"),
+        clock: "Callable[[], datetime] | None" = None,
     ) -> None:
         self._llm = llm
         self._calendar = calendar
@@ -226,7 +231,23 @@ class Manager:
         self._messages = messages_store
         self._persona = persona
         self._config = config
+        self._user_tz = user_tz
+        self._clock = clock
         self._tool_specs = self._build_tool_specs()
+
+    def _now_local(self) -> datetime:
+        if self._clock is not None:
+            return self._clock().astimezone(self._user_tz)
+        from datetime import UTC
+        return datetime.now(UTC).astimezone(self._user_tz)
+
+    def _current_time_preamble(self) -> str:
+        now = self._now_local()
+        weekday_zh = "一二三四五六日"[now.weekday()]
+        return (
+            f"当前时间：{now.strftime('%Y-%m-%d %H:%M')} "
+            f"星期{weekday_zh}（{self._user_tz.key}）"
+        )
 
     def _build_tool_specs(self) -> list[ToolSpec]:
         """Return the six tool specs advertised to the model."""
@@ -416,9 +437,10 @@ class Manager:
     ) -> AgentResult | None:
         system = self._build_system_prompt(mode_section)
         transcript = self._load_transcript(env.telegram_chat_id)
+        preamble = self._current_time_preamble()
         initial_user_text = (
-            f"对话记录:\n{transcript}\n\n最新用户消息: {env.body}"
-            if transcript else f"最新用户消息: {env.body}"
+            f"{preamble}\n\n对话记录:\n{transcript}\n\n最新用户消息: {env.body}"
+            if transcript else f"{preamble}\n\n最新用户消息: {env.body}"
         )
         return await self._agentic_loop(
             system=system,
@@ -433,8 +455,9 @@ class Manager:
         pulse_name = payload.get("pulse_name", env.body)
         payload_json = json.dumps(payload, ensure_ascii=False)
         transcript = self._load_transcript(env.telegram_chat_id)
+        preamble = self._current_time_preamble()
         initial_user_text = (
-            f"定时脉冲被触发: {pulse_name}\n"
+            f"{preamble}\n\n定时脉冲被触发: {pulse_name}\n"
             f"payload: {payload_json}"
         )
         if transcript:
@@ -479,9 +502,14 @@ class Manager:
                         handoff_text=turn_state.delegation_handoff,
                         delegation_payload=turn_state.delegation_payload,
                     )
-                final_text = result.text or ""
-                if is_pulse and not final_text.strip():
+                # Pulse path: a plain-text result means "nothing to do". Return
+                # None so the orchestrator does NOT emit a visible Telegram
+                # message. The pulse envelope itself is already persisted by
+                # handle_pulse as the audit trail; Manager's internal reasoning
+                # does not need to reach the user.
+                if is_pulse:
                     return None
+                final_text = result.text or ""
                 return AgentResult(
                     reply_text=final_text,
                     delegate_to=None,
