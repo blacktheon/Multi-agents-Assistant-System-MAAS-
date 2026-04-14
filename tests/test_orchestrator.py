@@ -2,10 +2,42 @@ from __future__ import annotations
 
 import pytest
 
+from project0.agents import registry as reg
+from project0.envelope import AgentResult, Envelope
 from project0.errors import RoutingError
 from project0.orchestrator import Orchestrator
 from project0.store import Store
 from project0.telegram_io import FakeBotSender, InboundUpdate
+
+
+async def _noop_manager(env: Envelope) -> AgentResult:
+    return AgentResult(reply_text="[noop-manager] ok", delegate_to=None, handoff_text=None)
+
+
+async def _news_delegating_manager(env: Envelope) -> AgentResult:
+    """Manager that delegates on 'news' keyword (mirrors original stub logic)."""
+    if "news" in env.body.lower():
+        return AgentResult(
+            reply_text=None,
+            delegate_to="intelligence",
+            handoff_text="→ forwarding to @intelligence",
+        )
+    return AgentResult(reply_text="[noop-manager] ok", delegate_to=None, handoff_text=None)
+
+
+@pytest.fixture(autouse=True)
+def install_manager():
+    """Install a minimal no-op manager into AGENT_REGISTRY for every test in
+    this module. Removed in teardown so the registry stays clean."""
+    original = reg.AGENT_REGISTRY.get("manager")
+    reg.AGENT_REGISTRY["manager"] = _news_delegating_manager
+    try:
+        yield
+    finally:
+        if original is not None:
+            reg.AGENT_REGISTRY["manager"] = original
+        else:
+            reg.AGENT_REGISTRY.pop("manager", None)
 
 
 @pytest.fixture()
@@ -42,7 +74,7 @@ async def test_default_manager_on_first_message(
     # One outbound reply from manager's bot.
     assert len(sender.sent) == 1
     assert sender.sent[0]["agent"] == "manager"
-    assert "[manager-stub]" in sender.sent[0]["text"]  # type: ignore[operator]
+    assert "noop-manager" in sender.sent[0]["text"]  # type: ignore[operator]
     # Focus is now manager.
     assert store.chat_focus().get(-100) == "manager"
 
@@ -115,31 +147,28 @@ async def test_allowlist_rejects_unknown_user(
 
 
 @pytest.mark.asyncio
-async def test_manager_delegation_produces_four_envelopes(
+async def test_manager_delegation_produces_three_envelopes(
     orchestrator: tuple[Orchestrator, FakeBotSender], store: Store
 ) -> None:
     orch, sender = orchestrator
     await orch.handle(_update(msg_id=10, text="any news today?"))
 
-    # Two outbound sends: (a) Manager's visible handoff, (b) Intelligence's reply.
+    # Only one outbound send: Intelligence's reply. Manager's handoff_text
+    # is intentionally not emitted to Telegram — the delegate target speaks
+    # for itself, Manager staying visibly silent keeps the group chat clean.
     agents_sent_by = [s["agent"] for s in sender.sent]
-    assert agents_sent_by == ["manager", "intelligence"]
-    assert "@intelligence" in sender.sent[0]["text"]  # type: ignore[operator]
-    assert "[intelligence-stub]" in sender.sent[1]["text"]  # type: ignore[operator]
+    assert agents_sent_by == ["intelligence"]
+    assert "[intelligence-stub]" in sender.sent[0]["text"]  # type: ignore[operator]
 
-    # Four rows in messages: user → manager, manager → user (handoff),
-    # manager → intelligence (internal), intelligence → user (reply).
+    # Three rows in messages: user → manager, manager → intelligence
+    # (internal), intelligence → user (reply). No handoff envelope.
     rows = store.conn.execute("SELECT * FROM messages ORDER BY id ASC").fetchall()
-    assert len(rows) == 4
+    assert len(rows) == 3
 
-    user_row, handoff_row, internal_row, intel_reply_row = rows
+    user_row, internal_row, intel_reply_row = rows
 
     assert user_row["from_kind"] == "user"
     assert user_row["to_agent"] == "manager"
-
-    assert handoff_row["from_agent"] == "manager"
-    assert handoff_row["to_agent"] == "user"
-    assert handoff_row["parent_id"] == user_row["id"]
 
     assert internal_row["from_agent"] == "manager"
     assert internal_row["to_agent"] == "intelligence"
@@ -150,8 +179,10 @@ async def test_manager_delegation_produces_four_envelopes(
     assert intel_reply_row["to_agent"] == "user"
     assert intel_reply_row["parent_id"] == internal_row["id"]
 
-    # Focus is now intelligence.
-    assert store.chat_focus().get(-100) == "intelligence"
+    # Focus stays on Manager. Delegation is internal routing, not a
+    # conversational handoff — if the user wants Intelligence, they need
+    # to @mention it explicitly.
+    assert store.chat_focus().get(-100) == "manager"
 
 
 @pytest.mark.asyncio
@@ -160,11 +191,8 @@ async def test_non_manager_delegation_raises_routing_error(
 ) -> None:
     """Delegation authority belongs exclusively to Manager. If Intelligence
     ever returned a delegation, the orchestrator must refuse it."""
-    from project0.agents import registry as reg
-    from project0.envelope import AgentResult
-    from project0.envelope import Envelope as E
 
-    async def rogue_intelligence(env: E) -> AgentResult:
+    async def rogue_intelligence(env: Envelope) -> AgentResult:
         return AgentResult(
             reply_text=None,
             delegate_to="manager",

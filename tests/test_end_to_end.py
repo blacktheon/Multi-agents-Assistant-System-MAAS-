@@ -12,9 +12,36 @@ from __future__ import annotations
 
 import pytest
 
+from project0.agents import registry as reg
+from project0.envelope import AgentResult, Envelope
 from project0.orchestrator import Orchestrator
 from project0.store import Store
 from project0.telegram_io import FakeBotSender, InboundUpdate
+
+
+async def _news_delegating_manager(env: Envelope) -> AgentResult:
+    """Minimal manager that replicates old stub's delegation behaviour."""
+    if "news" in env.body.lower():
+        return AgentResult(
+            reply_text=None,
+            delegate_to="intelligence",
+            handoff_text="→ forwarding to @intelligence",
+        )
+    return AgentResult(reply_text="[noop-manager] ok", delegate_to=None, handoff_text=None)
+
+
+@pytest.fixture(autouse=True)
+def install_manager():
+    """Install a news-delegating manager for tests in this module."""
+    original = reg.AGENT_REGISTRY.get("manager")
+    reg.AGENT_REGISTRY["manager"] = _news_delegating_manager
+    try:
+        yield
+    finally:
+        if original is not None:
+            reg.AGENT_REGISTRY["manager"] = original
+        else:
+            reg.AGENT_REGISTRY.pop("manager", None)
 
 
 @pytest.mark.asyncio
@@ -40,9 +67,11 @@ async def test_news_flow_produces_exact_envelope_tree(store: Store) -> None:
     )
 
     # --- outbound dispatch assertions ---
-    assert [s["agent"] for s in sender.sent] == ["manager", "intelligence"]
-    assert sender.sent[0]["text"] == "→ forwarding to @intelligence"
-    assert sender.sent[1]["text"] == "[intelligence-stub] acknowledged: any news today?"
+    # Only Intelligence sends a visible message. Manager's handoff_text
+    # is intentionally not emitted to Telegram: the delegate target
+    # speaks for itself.
+    assert [s["agent"] for s in sender.sent] == ["intelligence"]
+    assert sender.sent[0]["text"] == "[intelligence-stub] acknowledged: any news today?"
 
     # --- messages table assertions ---
     rows = list(
@@ -51,9 +80,9 @@ async def test_news_flow_produces_exact_envelope_tree(store: Store) -> None:
             "FROM messages ORDER BY id ASC"
         ).fetchall()
     )
-    assert len(rows) == 4
+    assert len(rows) == 3
 
-    user_row, handoff_row, internal_row, intel_reply_row = rows
+    user_row, internal_row, intel_reply_row = rows
 
     # Envelope #1: user → manager
     assert (user_row["source"], user_row["from_kind"], user_row["to_agent"]) == (
@@ -63,28 +92,27 @@ async def test_news_flow_produces_exact_envelope_tree(store: Store) -> None:
     )
     assert user_row["parent_id"] is None
 
-    # Envelope #2: manager → user (visible handoff)
-    assert handoff_row["from_agent"] == "manager"
-    assert handoff_row["to_agent"] == "user"
-    assert handoff_row["source"] == "internal"
-    assert handoff_row["parent_id"] == user_row["id"]
-
-    # Envelope #3: manager → intelligence (internal forward)
+    # Envelope #2: manager → intelligence (internal forward)
     assert internal_row["from_agent"] == "manager"
     assert internal_row["to_agent"] == "intelligence"
     assert internal_row["source"] == "internal"
     assert internal_row["parent_id"] == user_row["id"]
 
-    # Envelope #4: intelligence → user
+    # Envelope #3: intelligence → user
     assert intel_reply_row["from_agent"] == "intelligence"
     assert intel_reply_row["to_agent"] == "user"
     assert intel_reply_row["source"] == "internal"
     assert intel_reply_row["parent_id"] == internal_row["id"]
 
     # --- focus assertion ---
-    assert store.chat_focus().get(-100123) == "intelligence"
+    # Delegation no longer switches focus. Manager was set as the focus
+    # target by the initial default_manager routing and stays there.
+    assert store.chat_focus().get(-100123) == "manager"
 
-    # --- sticky focus: follow-up without @mention routes to Intelligence ---
+    # --- sticky focus: follow-up without @mention routes back to Manager ---
+    # The news-delegating fake returns a plain reply for any non-"news"
+    # body, so the second message is handled directly by Manager (no
+    # delegation chain this time).
     sender.sent.clear()
     await orch.handle(
         InboundUpdate(
@@ -97,5 +125,5 @@ async def test_news_flow_produces_exact_envelope_tree(store: Store) -> None:
         )
     )
     assert len(sender.sent) == 1
-    assert sender.sent[0]["agent"] == "intelligence"
-    assert "what else?" in sender.sent[0]["text"]  # type: ignore[operator]
+    assert sender.sent[0]["agent"] == "manager"
+    assert "[noop-manager]" in sender.sent[0]["text"]  # type: ignore[operator]

@@ -18,7 +18,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from project0.agents.registry import AGENT_REGISTRY, LISTENER_REGISTRY
+from project0.agents.registry import AGENT_REGISTRY, LISTENER_REGISTRY, PULSE_REGISTRY
 from project0.envelope import Envelope, RoutingReason
 from project0.errors import RoutingError
 from project0.mentions import parse_mentions
@@ -136,15 +136,13 @@ class Orchestrator:
             if target not in AGENT_REGISTRY:
                 raise RoutingError(f"unknown delegation target: {target!r}")
 
-            # (a) Visible handoff message — persisted as outbound_reply child
-            #     of the original user envelope, then dispatched via Manager's bot.
-            await self._emit_reply(
-                parent=persisted,
-                speaker="manager",
-                text=result.handoff_text,
-            )
-
-            # (b) Internal forward envelope — child of the original user envelope.
+            # (a) Internal forward envelope — child of the original user
+            #     envelope. We deliberately do NOT emit Manager's handoff_text
+            #     to Telegram: the target agent (Secretary, Intelligence) will
+            #     reply in its own voice, and a visible "forwarding to..."
+            #     line from Manager is redundant noise in the group chat.
+            #     The handoff_text is still kept on AgentResult for internal
+            #     logging and for tests that need to assert on it.
             internal = Envelope(
                 id=None,
                 ts=_utc_now_iso(),
@@ -159,15 +157,18 @@ class Orchestrator:
                 body=persisted.body,
                 mentions=[],
                 routing_reason="manager_delegation",
+                payload=result.delegation_payload,
             )
             persisted_internal = self.store.messages().insert(internal)
             assert persisted_internal is not None
 
-            # (c) Focus switches to the delegation target.
-            assert persisted.telegram_chat_id is not None
-            self.store.chat_focus().set(
-                persisted.telegram_chat_id, target
-            )
+            # Focus stays on Manager. Delegation is an internal routing
+            # mechanism, not a conversational handoff — if the user wants
+            # to talk to Secretary or Intelligence, they should @mention
+            # them explicitly. Letting delegation switch focus means a
+            # single "please remind me" request silently reassigns the
+            # chat for all future unmentioned messages, which surprised
+            # users during manual testing.
 
         # (d) Dispatch the target agent outside the lock.
         target_fn = AGENT_REGISTRY[target]
@@ -179,7 +180,9 @@ class Orchestrator:
                 f"delegated agent {target!r} tried to return non-reply result"
             )
 
-        final_focus_target = target
+        # Fan-out key: the user's message was routed to Manager originally,
+        # so Manager remains the focus target for listener fan-out.
+        final_focus_target = persisted.to_agent
 
         async with self.store.lock:
             await self._emit_reply(
@@ -192,6 +195,88 @@ class Orchestrator:
             original_user_envelope=persisted,
             focus_target=final_focus_target,
         )
+
+    async def handle_pulse(self, pulse_env: Envelope) -> None:
+        """Entry point for scheduled pulse ticks.
+
+        Parallel to ``handle(update)``: persists the pulse envelope, then
+        dispatches the target agent, then reuses the same reply / delegation
+        paths. Does not touch chat_focus and does not fan out to listeners.
+        """
+        assert pulse_env.source == "pulse"
+        assert pulse_env.routing_reason == "pulse"
+        assert pulse_env.to_agent == "manager", (
+            f"pulse target must be 'manager' in 6c; got {pulse_env.to_agent!r}"
+        )
+
+        async with self.store.lock:
+            persisted = self.store.messages().insert(pulse_env)
+            assert persisted is not None  # pulse envelopes never collide (no msg_id)
+
+        # Dispatch via PULSE_REGISTRY (raw, un-adapted handler) so that a
+        # None return propagates as "nothing to do" instead of being
+        # inflated into a fail-visible fallback reply by the AGENT_REGISTRY
+        # adapter. The pulse envelope itself is already persisted above,
+        # so the audit trail is intact even when Manager stays silent.
+        agent_fn = PULSE_REGISTRY[persisted.to_agent]
+        result = await agent_fn(persisted)
+
+        if result is None:
+            log.debug("pulse %s: manager returned None", persisted.body)
+            return
+
+        if result.is_reply():
+            async with self.store.lock:
+                await self._emit_reply(
+                    parent=persisted,
+                    speaker=persisted.to_agent,
+                    text=result.reply_text or "",
+                )
+            return
+
+        # Delegation path — reuse the same structure as handle().
+        async with self.store.lock:
+            assert result.delegate_to is not None
+            assert result.handoff_text is not None
+            target = result.delegate_to
+            if target not in AGENT_REGISTRY:
+                raise RoutingError(f"unknown delegation target: {target!r}")
+
+            # Manager's handoff_text is NOT emitted to Telegram for pulse
+            # delegations either — only the target agent's reply reaches
+            # the user. See handle() above for the same rationale.
+            internal = Envelope(
+                id=None,
+                ts=_utc_now_iso(),
+                parent_id=persisted.id,
+                source="internal",
+                telegram_chat_id=persisted.telegram_chat_id,
+                telegram_msg_id=None,
+                received_by_bot=None,
+                from_kind="agent",
+                from_agent="manager",
+                to_agent=target,
+                body=persisted.body,
+                mentions=[],
+                routing_reason="manager_delegation",
+                payload=result.delegation_payload,
+            )
+            persisted_internal = self.store.messages().insert(internal)
+            assert persisted_internal is not None
+
+        target_fn = AGENT_REGISTRY[target]
+        target_result = await target_fn(persisted_internal)
+        if target_result is None or not target_result.is_reply():
+            raise RoutingError(
+                f"pulse-delegated agent {target!r} must return a reply"
+            )
+
+        async with self.store.lock:
+            await self._emit_reply(
+                parent=persisted_internal,
+                speaker=target,
+                text=target_result.reply_text or "",
+            )
 
     # --- helpers -------------------------------------------------------------
 
