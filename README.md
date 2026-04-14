@@ -1,69 +1,112 @@
-# Project 0 — Multi-Agent Assistant
+# MAAS — Multi-Agent Assistant System
 
-Single-process Python implementation of Project 0. Design specs live under
-`docs/superpowers/specs/`:
-- `2026-04-13-multi-agent-skeleton-design.md` — foundational skeleton
-- `2026-04-13-secretary-design.md` — sub-project 6a (Secretary, first real LLM agent)
+A single-process Python implementation of a personal multi-agent assistant. Three Telegram bots back three distinct agents, sharing a single orchestrator and a single SQLite envelope log. The agents speak Chinese in character.
 
-## What runs today
+> **Status:** sub-projects 6a (Secretary), 6b (Google Calendar), and 6c (Manager + pulse) all merged. Manager and Secretary are real LLM-backed agents; Intelligence is still a stub awaiting sub-project 6d.
 
-**Skeleton:** Manager + Intelligence routing, memory isolation, @mention
-focus tracking, Manager-only delegation, SQLite envelope log.
+## What it does today
 
-**Sub-project 6a (Secretary):** a real LLM-backed conversational companion.
-Speaks Chinese, passively observes group chats with a rich cooldown gate,
-replies to @mentions / DMs, and delivers Manager-directed reminders.
-Calls Claude via a thin provider interface with prompt caching.
+- **Manager (林夕)** — the planner. A real Claude tool-use agent with read/write access to your Google Calendar via four calendar tools (list, create, update, delete) and two delegation tools (to Secretary, to Intelligence). Composed and precise; understands time words like "明天" / "下午" / "一会" relative to your sleep rhythm, not the calendar rollover.
+- **Secretary** — the warm conversational companion. Passively observes group chats with a rich cooldown gate, replies to `@mentions` and DMs in character, and delivers reminders that Manager delegates to her.
+- **Intelligence** — currently a stub. Real implementation is sub-project 6d.
+- **Pulse primitive** — generic per-agent scheduled wake-up. Manager has one pulse entry (`check_calendar`, every 30 min by default) that scans the next 60 minutes of calendar events and proactively asks Secretary to deliver a reminder when something is coming up. The orchestrator and pulse loader are domain-agnostic; adding a new pulse to any agent is a one-line TOML edit.
+- **Routing & focus** — `@mention` switches focus, last-mentioned agent wins, sticky focus until the next mention. Delegation never switches focus (so a "remind me of X" request doesn't silently reassign the chat). `chat_focus` is wiped on every process restart.
+- **Audit log** — every envelope (user message, agent reply, internal delegation, listener observation, pulse tick) is written to `data/store.db` as a JSON blob with parent-child links. Inspectable with `sqlite3` for postmortems.
+
+## Architecture at a glance
+
+```
+Telegram                  Orchestrator                Agents
+─────────                 ────────────                ──────
+manager bot ─┐                                       Manager (LLM + tool use)
+secretary bot├─→  poller ─→ allow-list ─→ envelope ─→ Secretary (LLM)
+intel bot    ┘                  ↓             ↓       Intelligence (stub)
+                            content dedup   focus  ↘
+                                ↓                   tool calls → GoogleCalendar
+                            messages table              ↓
+                                ↑                   reply / delegate
+                                └── PULSE_REGISTRY ──── pulse scheduler (asyncio)
+```
+
+Design docs (worth reading in order):
+
+- `docs/superpowers/specs/2026-04-13-multi-agent-skeleton-design.md` — orchestrator, envelope shape, focus routing, listener fan-out
+- `docs/superpowers/specs/2026-04-13-secretary-design.md` — Secretary's persona, cooldown gate, four entry paths
+- `docs/superpowers/specs/2026-04-14-google-calendar-integration-design.md` — `GoogleCalendar` async client, OAuth flow, model translation
+- `docs/superpowers/specs/2026-04-14-manager-agent-and-pulse-design.md` — Manager's tool-use loop, pulse primitive, `complete_with_tools` provider extension
+
+Implementation plans (matching specs) live in `docs/superpowers/plans/`.
 
 ## One-time setup
 
-### 1. Create the bots
+### 1. Python environment
+
+```bash
+uv sync
+```
+
+### 2. Telegram bots
 
 In Telegram, talk to `@BotFather`:
 
-1. `/newbot` → name it "Project0 Manager", username ending in `_bot`.
-2. `/newbot` → name it "Project0 Intelligence", username ending in `_bot`.
-3. `/newbot` → name it "Project0 Secretary", username ending in `_bot`.
-4. For **each** bot, run `/setprivacy` → pick the bot → **Disable**. This is
-   required so bots in groups see every message, not only @mentions.
-5. Save all three tokens.
+1. `/newbot` × 3 — create one bot each for Manager, Secretary, Intelligence. Save all three tokens.
+2. For **each** bot run `/setprivacy` → pick the bot → **Disable**. Required so bots in groups see every message, not only `@mentions`.
+3. Create a Telegram group, add all three bots, send a test message.
+4. Find the group's `chat_id` (negative, starts with `-100…` for supergroups). The simplest way is to start the project with `LOG_LEVEL=DEBUG` once and watch the orchestrator log lines.
+5. Find your own Telegram numeric user id by talking to `@userinfobot`.
 
-### 2. Create a Telegram group
+### 3. Google Cloud (for Manager's calendar tools)
 
-1. Create a new Telegram group.
-2. Add all three bots as members.
-3. Send any message. Look at the raw update (e.g., by enabling Telegram
-   Desktop's "Copy Link" feature on a message, or by temporarily running
-   the bot with `LOG_LEVEL=DEBUG`) to find the group's `chat_id`. For
-   supergroups, the `chat_id` is negative and starts with `-100...`.
-4. Find your own Telegram user id. Talk to `@userinfobot` — it will reply
-   with your numeric id.
+One-time, ~5 minutes via https://console.cloud.google.com:
 
-### 3. Fill in `.env`
+1. Create a project (or reuse one). Enable the **Google Calendar API** in the API Library.
+2. Configure the OAuth consent screen as **External**, app name `MAAS`, user support email = your email, scope `https://www.googleapis.com/auth/calendar.events`, add your own Google account as a Test user. Leave the app in **Testing** mode forever — that's correct for a personal tool.
+3. Create OAuth 2.0 credentials, type **Desktop app**, name it freely, download the JSON.
+4. Save the JSON as `data/google_client_secrets.json`. (`data/` is gitignored.)
+
+You'll be prompted to authorize once on the first run; the resulting refresh token is cached at `data/google_token.json` automatically.
+
+To revoke later: https://myaccount.google.com/permissions → MAAS → Remove access. Then `rm data/google_token.json`.
+
+### 4. `.env`
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env`:
+Fill it in:
 
-```
-TELEGRAM_BOT_TOKEN_MANAGER=<manager bot token>
-TELEGRAM_BOT_TOKEN_INTELLIGENCE=<intelligence bot token>
-TELEGRAM_BOT_TOKEN_SECRETARY=<secretary bot token>
-TELEGRAM_ALLOWED_CHAT_IDS=<your group chat_id, e.g. -100123456789>
-TELEGRAM_ALLOWED_USER_IDS=<your telegram user id>
-ANTHROPIC_API_KEY=sk-ant-...    # Secretary makes real calls via this
-LLM_PROVIDER=anthropic          # default; "fake" for FakeProvider
-LLM_MODEL=claude-sonnet-4-6     # override to change models
+```env
+# Telegram bot tokens (one per agent)
+TELEGRAM_BOT_TOKEN_MANAGER=...
+TELEGRAM_BOT_TOKEN_INTELLIGENCE=...
+TELEGRAM_BOT_TOKEN_SECRETARY=...
+
+# Allow-lists. Required — without these the orchestrator refuses to start.
+TELEGRAM_ALLOWED_CHAT_IDS=-100123456789
+TELEGRAM_ALLOWED_USER_IDS=12345678
+
+# LLM
+ANTHROPIC_API_KEY=sk-ant-...
+LLM_PROVIDER=anthropic               # default; "fake" uses FakeProvider for tests
+LLM_MODEL=claude-sonnet-4-6          # default
+
+# Storage + logging
 STORE_PATH=data/store.db
 LOG_LEVEL=INFO
-```
 
-### 4. Install dependencies
+# Google Calendar (sub-project 6b)
+USER_TIMEZONE=Asia/Shanghai          # any IANA zone name
+GOOGLE_CALENDAR_ID=primary           # or a non-primary calendar id
+# GOOGLE_TOKEN_PATH=data/google_token.json            # default
+# GOOGLE_CLIENT_SECRETS_PATH=data/google_client_secrets.json   # default
 
-```bash
-uv sync
+# Manager pulse target (sub-project 6c)
+# Telegram chat id where check_calendar reminders are delivered. Must
+# match one of TELEGRAM_ALLOWED_CHAT_IDS. Comment this out to disable
+# the pulse entry entirely (the loader will then fail loudly at startup,
+# which is what you want).
+MANAGER_PULSE_CHAT_ID=-100123456789
 ```
 
 ## Running
@@ -72,203 +115,113 @@ uv sync
 uv run python -m project0.main
 ```
 
-Both bots start polling. Leave the process running in one terminal.
+Healthy startup logs roughly look like:
 
-## Manual smoke test (acceptance criterion D)
+```
+INFO project0 :: secretary registered (model=claude-sonnet-4-6)
+INFO project0 :: chat_focus cleared on startup
+INFO project0 :: google calendar ready (calendar_id=primary tz=Asia/Shanghai)
+INFO project0 :: manager registered (model=claude-sonnet-4-6)
+INFO project0 :: manager pulse entries: [('check_calendar', 1800)]
+INFO project0 :: bot manager polling
+INFO project0 :: bot secretary polling
+INFO project0 :: bot intelligence polling
+INFO project0 :: pulse task spawned: check_calendar
+```
 
-In the Telegram group that contains your user + both bots, perform these
-checks in order. The `messages` table can be inspected any time with
-`sqlite3 data/store.db`.
+Leave the process running. Talk to the bots from your Telegram client.
 
-- **D.1.** Send `hello`. Expect: one reply from the Manager bot:
-  `[manager-stub] acknowledged: hello`
-- **D.2.** Send `any news today?`. Expect two messages, in order:
-  1. From the Manager bot: `→ forwarding to @intelligence`
-  2. From the Intelligence bot: `[intelligence-stub] acknowledged: any news today?`
-- **D.3.** Send `what else?` (no @mention). Expect: one reply from the
-  **Intelligence** bot, proving sticky focus carried over from D.2.
-- **D.4.** Send `@manager what's up`. Expect: one reply from the Manager
-  bot. Then send `and now?` — it should also route to Manager, proving
-  the @mention switched the focus.
-- **D.5.** Open a direct chat (DM) with the Intelligence bot. Send
-  `hi there`. Expect: `[intelligence-stub] acknowledged: hi there` from
-  Intelligence in the DM. Group focus should be unchanged.
+## What to try
 
-### Inspecting the message tree
+In the allow-listed Telegram group:
 
-After D.2, the envelope tree should be visible:
+- **Manager queries.** `@manager 我明天有什么事？` — Manager calls `calendar_list_events` and reports your real events.
+- **Edits.** `@manager 把下个活动改名成「和教授吃早餐」` — direct edit, no confirmation prompt; Manager reports `搞定` after the patch lands.
+- **Deletes.** `@manager 把下个活动删了` — same, no confirmation.
+- **Creates.** `@manager 添加：明天下午三点和导师开会一小时` — created without prompting because all required fields are present.
+- **Manual reminder.** `@manager 提醒我下一个活动` — Manager delegates to Secretary, who posts a warm reminder in her own voice. Manager itself stays visibly silent during the handoff.
+- **Proactive pulse reminder.** Create a calendar event for ~30 minutes from now via Google Calendar. Wait for the next pulse tick (default 30 min — lower `every_seconds` in `prompts/manager.toml` to `60` for fast testing). Secretary should post a proactive reminder in the group with no prompting.
+- **Secretary directly.** `@secretary 你好` for a Chinese reply, or DM the Secretary bot directly for a more personal tone. Without a mention, group messages route to whoever currently holds focus (Manager by default after every restart).
+
+## Inspecting the audit log
+
+Every envelope is in `data/store.db`. Useful queries:
 
 ```bash
-sqlite3 data/store.db "SELECT id, parent_id, source, from_kind, from_agent, to_agent, substr(envelope_json, 1, 60) FROM messages ORDER BY id;"
+# Last 20 envelopes, terse view
+sqlite3 data/store.db "SELECT id, parent_id, source, from_kind, from_agent, to_agent,
+  json_extract(envelope_json, '\$.routing_reason') AS reason
+  FROM messages ORDER BY id DESC LIMIT 20;"
+
+# Just pulse envelopes
+sqlite3 data/store.db "SELECT id, ts, json_extract(envelope_json, '\$.payload') AS payload
+  FROM messages WHERE source='pulse' ORDER BY id DESC LIMIT 20;"
 ```
 
-You should see four rows for the D.2 flow:
-
-```
-id | parent_id | source          | from_kind | from_agent    | to_agent
----+-----------+-----------------+-----------+---------------+--------------
- N | NULL      | telegram_group  | user      | NULL          | manager
-N+1| N         | internal        | agent     | manager       | user         (the visible handoff)
-N+2| N         | internal        | agent     | manager       | intelligence (the internal forward)
-N+3| N+2       | internal        | agent     | intelligence  | user         (the reply)
-```
-
-## Automated checks
+## Tests
 
 ```bash
-uv run pytest -v
+uv run pytest -q              # ~170 unit + orchestrator tests, all hermetic
 uv run mypy src/project0
 uv run ruff check src tests
 ```
 
-All three must be green for acceptance.
+There are no live-API tests in the unit suite. The two scripts in `scripts/` exercise the real Anthropic and Google Calendar APIs respectively and are run manually:
 
-## Sub-project 6a — Secretary smoke test (acceptance criterion G)
-
-Requires a real `ANTHROPIC_API_KEY` and all three bots in the allow-listed
-group. Secretary will speak Chinese in character.
-
-- **G.1.** Send a few short messages (`hi`, `ok`, `sure`). Secretary stays
-  silent — the cooldown has not opened yet (needs ≥90s elapsed, ≥4 msgs,
-  ≥200 weighted chars since the last Secretary reply).
-- **G.2.** Once thresholds are crossed, Secretary either chimes in (one
-  Chinese line, in character) or stays silent (LLM returned `[skip]`).
-  Both outcomes are normal — repeat over a few minutes to see both.
-- **G.3.** Send `@secretary 你好`. Expect an immediate Chinese reply.
-- **G.4.** DM Secretary's bot directly with `你今天怎么样`. Expect a reply
-  with a more personal tone.
-- **G.5.** Run `uv run python scripts/inject_reminder.py "项目评审" "明天下午3点"`.
-  Expect a warm Chinese reminder printed to stdout. (Bypasses Telegram.)
-- **G.6.** Inspect the audit tree:
-  ```bash
-  sqlite3 data/store.db "SELECT id, parent_id, from_agent, to_agent, \
-    json_extract(envelope_json, '\$.routing_reason') AS rr \
-    FROM messages ORDER BY id DESC LIMIT 20;"
-  ```
-  For each group message there should be a `listener_observation` envelope
-  whose `parent_id` points at the original user envelope; any Secretary
-  reply links to the listener_observation, not the original.
-
-### Upgrading from skeleton to 6a
-
-The new `payload_json` column on `messages` is added via an idempotent
-`ALTER TABLE ADD COLUMN` on startup — no manual migration needed. Your
-existing `data/store.db` will be upgraded in place.
+- `scripts/calendar_smoke.py` — seven-step end-to-end calendar test (read, create, update, get, delete, error path). Creates a real test event on your real calendar; cleans up via `atexit` even if interrupted.
+- `scripts/inject_reminder.py` — synthesizes a Manager-delegated reminder envelope and prints Secretary's response without going through Telegram. Useful for tuning Secretary's reminder voice.
 
 ## Reset
-
-If you need to start over:
 
 ```bash
 rm data/store.db
 ```
 
-The schema is recreated on next startup. There is no migration system
-in the skeleton.
+The schema is recreated on next startup. Idempotent additive migrations handle column adds across sub-projects, so you don't normally need to wipe.
 
-## Google Cloud setup (sub-project 6b)
+To also drop Google auth: `rm data/google_token.json` (next startup will re-prompt the browser flow).
 
-The Google Calendar integration needs a personal OAuth client. This is
-a one-time setup done through the Google Cloud Console and takes about
-five minutes.
-
-1. Go to https://console.cloud.google.com, create a new project called
-   `project-0` (or reuse an existing personal project).
-2. In the project, open the API Library and enable the **Google Calendar
-   API**.
-3. Open the OAuth consent screen page:
-   - User type: **External**
-   - App name: `Project 0`
-   - User support email: your own email
-   - Scopes: add `https://www.googleapis.com/auth/calendar.events`
-   - Test users: add your own Google account
-   The app stays in **Testing** mode permanently. This is correct for a
-   personal tool — no Google verification review is required and your
-   token stays valid.
-4. Open the Credentials page and create OAuth 2.0 credentials:
-   - Type: **Desktop app**
-   - Name: `Project 0 local`
-   Download the resulting JSON file.
-5. Save the downloaded file as `data/google_client_secrets.json` in this
-   repo. `data/` is already gitignored so this file cannot land in the
-   repo by accident.
-
-You only do these steps once per personal Google account. After that,
-the OAuth token file at `data/google_token.json` is created automatically
-the first time you run `scripts/calendar_smoke.py`.
-
-## 6b smoke test
-
-After completing Google Cloud setup above, run:
-
-    uv run python scripts/calendar_smoke.py
-
-On first run a browser window opens asking you to authorize Project 0
-to access your calendar. Approve, then return to the terminal. The
-script walks through seven steps:
-
-1. Authorize (browser flow on first run; silent load on later runs).
-2. Read upcoming 7 days — prints a table of your real events.
-3. Create a test event 1 hour from now. Pauses for you to confirm
-   visually in Google Calendar on any device, then press Enter.
-4. Update the test event's title. Pauses again.
-5. Round-trip the edit through `get_event` and assert it matches.
-6. Delete the test event. Pauses for visual confirmation.
-7. Verify that a bogus event ID raises `GoogleCalendarError`.
-
-If the script crashes between steps 3 and 6, an `atexit` handler makes
-a best-effort attempt to delete the test event. If the network is down
-at exit time, delete it manually in Google Calendar.
-
-To refresh the golden test fixtures after an SDK upgrade or a Google
-API change, delete `data/google_token.json` and run:
-
-    uv run python scripts/calendar_smoke.py --dump-fixtures tests/fixtures/google_calendar/
-
-Then commit the updated fixtures.
-
-To revoke Project 0's access entirely, visit
-https://myaccount.google.com/permissions, find "Project 0" in the list,
-and remove its access. Delete `data/google_token.json` locally afterwards.
-
-## Sub-project 6c — Manager + pulse
-
-Manager is now a real LLM agent with calendar tool use and scheduled pulses.
-
-### Required env vars (in addition to 6a/6b)
-
-- `MANAGER_PULSE_CHAT_ID` — integer Telegram chat id where the Manager's
-  `check_calendar` pulse should deliver reminders (via Secretary). Must be
-  one of `TELEGRAM_ALLOWED_CHAT_IDS`. Omit the variable to disable that
-  pulse entry (the loader will raise at startup — which is what you want).
-
-### Smoke run
-
-```bash
-uv run python -m project0.main
-```
-
-Expected log lines on a healthy start:
+## Project layout
 
 ```
-INFO project0 :: google calendar ready (calendar_id=primary tz=Asia/Shanghai)
-INFO project0 :: manager registered (model=claude-sonnet-4-6)
-INFO project0 :: manager pulse entries: [('check_calendar', 300)]
-INFO project0 :: pulse task spawned: check_calendar
+src/project0/
+├── main.py                # composition root: Settings → Store → agents → bots → pulse loops
+├── orchestrator.py        # routing, focus, dedup, delegation, pulse dispatch
+├── envelope.py            # the Envelope dataclass + AgentResult
+├── store.py               # SQLite messages table, agent_memory, chat_focus
+├── pulse.py               # PulseEntry, load_pulse_entries, run_pulse_loop, build_pulse_envelope
+├── config.py              # Settings dataclass + load_settings (env + .env)
+├── telegram_io.py         # python-telegram-bot wrappers, FakeBotSender
+├── mentions.py            # @mention parser
+├── llm/
+│   ├── provider.py        # LLMProvider Protocol, FakeProvider, AnthropicProvider
+│   └── tools.py           # ToolSpec / ToolCall / ToolUseResult / msg variants
+├── agents/
+│   ├── registry.py        # AGENT_REGISTRY, LISTENER_REGISTRY, PULSE_REGISTRY, register_*
+│   ├── manager.py         # Manager class (林夕): tool dispatch + agentic loop
+│   ├── secretary.py       # Secretary class: cooldown gate + four entry paths
+│   └── intelligence.py    # stub (sub-project 6d)
+└── calendar/
+    ├── auth.py            # OAuth installed-app flow
+    ├── client.py          # async wrapper around google-api-python-client
+    ├── model.py           # CalendarEvent + raw ↔ model translation
+    └── errors.py          # GoogleCalendarError
+
+prompts/
+├── manager.md / .toml     # 林夕 persona + LLM/pulse config
+└── secretary.md / .toml   # Secretary persona + cooldown thresholds
+
+docs/superpowers/
+├── specs/                 # per-sub-project design specs (read in date order)
+└── plans/                 # per-sub-project TDD implementation plans
 ```
 
-The first scheduled `check_calendar` tick fires ~5 minutes after startup
-(not immediately). To iterate faster, temporarily lower `every_seconds`
-in `prompts/manager.toml` to its floor of `10`.
+## Roadmap
 
-### Manual test checklist
+- **6d** — Intelligence agent (currently a stub). Twitter/X ingestion, daily briefings, candidate learning material.
+- **6e** — Learning agent. Notes, knowledge base, review scheduling.
+- **6f** — Supervisor agent. Audit, scoring, incident investigation.
+- **Multi-process safety** — pulses currently assume one orchestrator process; a `pulse_leases` table is the planned fix.
+- **WebUI control panel** — design exists in `Project 0: Multi-agent assistant system.md`; implementation TBD.
 
-- **C.1.** DM to the Manager bot → model replies in-character (no calendar call
-      required)
-- **C.2.** Group mention "@manager 我明天有什么事" → model calls
-      `calendar_list_events` and reports the results
-- **C.3.** Ask Manager to remind you of something → Secretary receives the
-      delegation envelope and sends a warm reminder message
-- **C.4.** Let the `check_calendar` pulse fire at least once; with an upcoming
-      event on the calendar, confirm Secretary posts a proactive reminder
-      in `MANAGER_PULSE_CHAT_ID`
+The full Project 0 architecture document — agent responsibilities, memory layers (A–F), governance model — lives at `Project 0: Multi-agent assistant system.md` in the repo root.
