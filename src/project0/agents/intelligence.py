@@ -9,11 +9,25 @@ one Sonnet (Q&A). The class itself is completed in Tasks 10–12; this
 file currently holds loaders and dataclasses only."""
 from __future__ import annotations
 
+import json
 import logging
 import tomllib
 from dataclasses import dataclass
+from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo
+
+from project0.agents._tool_loop import TurnState
+from project0.intelligence.generate import generate_daily_report
+from project0.intelligence.report import list_report_dates, read_report
+from project0.intelligence.source import TwitterSource, TwitterSourceError
+from project0.intelligence.watchlist import WatchEntry
+from project0.llm.tools import ToolCall, ToolSpec
+
+if TYPE_CHECKING:
+    from project0.llm.provider import LLMProvider
+    from project0.store import MessagesStore
 
 log = logging.getLogger(__name__)
 
@@ -146,6 +160,188 @@ def load_intelligence_config(path: Path) -> IntelligenceConfig:
         timeline_since_hours=int(_require("twitter", "timeline_since_hours")),
         max_tweets_per_handle=int(_require("twitter", "max_tweets_per_handle")),
     )
+
+
+# --- tool input schemas ------------------------------------------------------
+
+_GENERATE_REPORT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "date": {
+            "type": "string",
+            "description": "YYYY-MM-DD; defaults to today in user_tz",
+        },
+    },
+    "required": [],
+}
+
+_GET_LATEST_REPORT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {},
+    "required": [],
+}
+
+_GET_REPORT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "date": {"type": "string", "description": "YYYY-MM-DD"},
+    },
+    "required": ["date"],
+}
+
+_LIST_REPORTS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "limit": {"type": "integer", "minimum": 1, "maximum": 30},
+    },
+    "required": [],
+}
+
+
+# --- Intelligence class -------------------------------------------------------
+
+class Intelligence:
+    """LLM-backed briefing specialist. Two LLM providers: Opus for the
+    deterministic summarization pipeline, Sonnet for the agentic Q&A
+    loop. Four tools: generate_daily_report, get_latest_report,
+    get_report, list_reports. Never delegates."""
+
+    def __init__(
+        self,
+        *,
+        llm_summarizer: "LLMProvider",
+        llm_qa: "LLMProvider",
+        twitter: TwitterSource,
+        messages_store: "MessagesStore | None",
+        persona: IntelligencePersona,
+        config: IntelligenceConfig,
+        watchlist: list[WatchEntry],
+        reports_dir: Path,
+        user_tz: ZoneInfo,
+    ) -> None:
+        self._llm_summarizer = llm_summarizer
+        self._llm_qa = llm_qa
+        self._twitter = twitter
+        self._messages = messages_store
+        self._persona = persona
+        self._config = config
+        self._watchlist = watchlist
+        self._reports_dir = reports_dir
+        self._user_tz = user_tz
+        self._tool_specs = self._build_tool_specs()
+
+    def _build_tool_specs(self) -> list[ToolSpec]:
+        return [
+            ToolSpec(
+                name="generate_daily_report",
+                description=(
+                    "Fetch tweets from the watchlist and write a new daily "
+                    "report JSON file. Use only when the user clearly asked "
+                    "to generate a new report."
+                ),
+                input_schema=_GENERATE_REPORT_SCHEMA,
+            ),
+            ToolSpec(
+                name="get_latest_report",
+                description=(
+                    "Read the most recent daily report. DO NOT CALL this "
+                    "when today's report is already injected into your "
+                    "context — only call it as a fallback."
+                ),
+                input_schema=_GET_LATEST_REPORT_SCHEMA,
+            ),
+            ToolSpec(
+                name="get_report",
+                description="Read a specific past daily report by date.",
+                input_schema=_GET_REPORT_SCHEMA,
+            ),
+            ToolSpec(
+                name="list_reports",
+                description=(
+                    "List available report dates (most recent first)."
+                ),
+                input_schema=_LIST_REPORTS_SCHEMA,
+            ),
+        ]
+
+    async def _dispatch_tool(
+        self,
+        call: ToolCall,
+        turn_state: TurnState,
+    ) -> tuple[str, bool]:
+        """Execute one tool call. Intelligence never delegates, so
+        ``turn_state`` is accepted for interface symmetry but not mutated."""
+        del turn_state  # unused; Intelligence never delegates
+        try:
+            return await self._dispatch_tool_inner(call)
+        except TwitterSourceError as e:
+            log.warning("twitter error in tool %s: %s", call.name, e)
+            return f"twitter source error: {e}", True
+        except (KeyError, ValueError, TypeError) as e:
+            log.warning("input error in tool %s: %s", call.name, e)
+            return f"invalid input for {call.name}: {e}", True
+
+    async def _dispatch_tool_inner(
+        self,
+        call: ToolCall,
+    ) -> tuple[str, bool]:
+        name = call.name
+        inp = call.input
+
+        if name == "generate_daily_report":
+            date_str = inp.get("date")
+            target_date = (
+                date.fromisoformat(date_str)
+                if date_str
+                else datetime.now(tz=self._user_tz).date()
+            )
+            report = await generate_daily_report(
+                date=target_date,
+                source=self._twitter,
+                llm=self._llm_summarizer,
+                summarizer_model=self._config.summarizer_model,
+                summarizer_max_tokens=self._config.summarizer_max_tokens,
+                watchlist=self._watchlist,
+                reports_dir=self._reports_dir,
+                user_tz=self._user_tz,
+                timeline_since_hours=self._config.timeline_since_hours,
+                max_tweets_per_handle=self._config.max_tweets_per_handle,
+            )
+            return json.dumps({
+                "path": str(self._reports_dir / f"{target_date}.json"),
+                "item_count": len(report.get("news_items", [])),
+                "tweets_fetched": report["stats"]["tweets_fetched"],
+                "handles_failed": len(report["stats"]["errors"]),
+            }, ensure_ascii=False), False
+
+        if name == "get_latest_report":
+            dates = list_report_dates(self._reports_dir)
+            if not dates:
+                return "no reports available", False
+            latest = read_report(self._reports_dir / f"{dates[0]}.json")
+            return json.dumps(latest, ensure_ascii=False), False
+
+        if name == "get_report":
+            target = date.fromisoformat(inp["date"])
+            path = self._reports_dir / f"{target}.json"
+            if not path.exists():
+                return f"no report for {target}", False
+            report = read_report(path)
+            return json.dumps(report, ensure_ascii=False), False
+
+        if name == "list_reports":
+            limit = int(inp.get("limit", 7))
+            dates = list_report_dates(self._reports_dir)[:limit]
+            results = []
+            for d in dates:
+                rep = read_report(self._reports_dir / f"{d}.json")
+                results.append({
+                    "date": d.isoformat(),
+                    "item_count": len(rep.get("news_items", [])),
+                })
+            return json.dumps(results, ensure_ascii=False), False
+
+        return f"unknown tool: {name}", True
 
 
 # --- legacy stub (removed in Task 13 once Intelligence is fully wired) ------
