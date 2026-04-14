@@ -66,6 +66,14 @@ async def _run(settings: Settings) -> None:
     store = Store(settings.store_path)
     store.init_schema()
 
+    # Every process restart begins with Manager as the default route for
+    # every group chat, regardless of where the previous process left focus.
+    # Delegations (e.g. "please remind me of X" → Secretary) no longer
+    # switch focus at all, but this clears any legacy focus rows left over
+    # from pre-fix runs.
+    store.chat_focus().clear_all()
+    log.info("chat_focus cleared on startup")
+
     # Build the LLM provider once; share it across agents.
     llm = _build_llm_provider(settings)
 

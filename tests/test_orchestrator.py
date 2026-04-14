@@ -179,8 +179,10 @@ async def test_manager_delegation_produces_three_envelopes(
     assert intel_reply_row["to_agent"] == "user"
     assert intel_reply_row["parent_id"] == internal_row["id"]
 
-    # Focus is now intelligence.
-    assert store.chat_focus().get(-100) == "intelligence"
+    # Focus stays on Manager. Delegation is internal routing, not a
+    # conversational handoff — if the user wants Intelligence, they need
+    # to @mention it explicitly.
+    assert store.chat_focus().get(-100) == "manager"
 
 
 @pytest.mark.asyncio

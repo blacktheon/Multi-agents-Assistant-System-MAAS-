@@ -344,3 +344,9 @@ class ChatFocusStore:
             """,
             (chat_id, agent, _utc_now_iso()),
         )
+
+    def clear_all(self) -> None:
+        """Wipe every chat's focus. Called once at process startup so each
+        restart begins with Manager as the default route for every group,
+        regardless of where the previous process left things."""
+        self._conn.execute("DELETE FROM chat_focus")

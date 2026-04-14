@@ -162,11 +162,13 @@ class Orchestrator:
             persisted_internal = self.store.messages().insert(internal)
             assert persisted_internal is not None
 
-            # (c) Focus switches to the delegation target.
-            assert persisted.telegram_chat_id is not None
-            self.store.chat_focus().set(
-                persisted.telegram_chat_id, target
-            )
+            # Focus stays on Manager. Delegation is an internal routing
+            # mechanism, not a conversational handoff — if the user wants
+            # to talk to Secretary or Intelligence, they should @mention
+            # them explicitly. Letting delegation switch focus means a
+            # single "please remind me" request silently reassigns the
+            # chat for all future unmentioned messages, which surprised
+            # users during manual testing.
 
         # (d) Dispatch the target agent outside the lock.
         target_fn = AGENT_REGISTRY[target]
@@ -178,7 +180,9 @@ class Orchestrator:
                 f"delegated agent {target!r} tried to return non-reply result"
             )
 
-        final_focus_target = target
+        # Fan-out key: the user's message was routed to Manager originally,
+        # so Manager remains the focus target for listener fan-out.
+        final_focus_target = persisted.to_agent
 
         async with self.store.lock:
             await self._emit_reply(

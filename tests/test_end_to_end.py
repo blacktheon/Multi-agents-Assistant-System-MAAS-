@@ -105,9 +105,14 @@ async def test_news_flow_produces_exact_envelope_tree(store: Store) -> None:
     assert intel_reply_row["parent_id"] == internal_row["id"]
 
     # --- focus assertion ---
-    assert store.chat_focus().get(-100123) == "intelligence"
+    # Delegation no longer switches focus. Manager was set as the focus
+    # target by the initial default_manager routing and stays there.
+    assert store.chat_focus().get(-100123) == "manager"
 
-    # --- sticky focus: follow-up without @mention routes to Intelligence ---
+    # --- sticky focus: follow-up without @mention routes back to Manager ---
+    # The news-delegating fake returns a plain reply for any non-"news"
+    # body, so the second message is handled directly by Manager (no
+    # delegation chain this time).
     sender.sent.clear()
     await orch.handle(
         InboundUpdate(
@@ -120,5 +125,5 @@ async def test_news_flow_produces_exact_envelope_tree(store: Store) -> None:
         )
     )
     assert len(sender.sent) == 1
-    assert sender.sent[0]["agent"] == "intelligence"
-    assert "what else?" in sender.sent[0]["text"]  # type: ignore[operator]
+    assert sender.sent[0]["agent"] == "manager"
+    assert "[noop-manager]" in sender.sent[0]["text"]  # type: ignore[operator]

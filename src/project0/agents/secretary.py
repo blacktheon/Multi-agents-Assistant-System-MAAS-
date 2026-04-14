@@ -365,7 +365,17 @@ class Secretary:
         chat_id = env.telegram_chat_id
         transcript = self._load_transcript(chat_id) if chat_id is not None else ""
         system = self._persona.core + "\n\n" + mode_section
-        user_msg = f"{preface}\n{transcript}"
+        # Scene context so the model doesn't guess group vs DM. Secretary's
+        # tone shifts between the two (flirtier in DM, more reserved in a
+        # group with other agents listening), so getting this wrong is a
+        # UX bug, not a stylistic quibble.
+        if env.source == "telegram_group":
+            scene = "当前场景：Telegram 群聊（可能有其他人或其他 agent 看得见你说的话）"
+        elif env.source == "telegram_dm":
+            scene = "当前场景：Telegram 私聊（只有老公一个人看得见）"
+        else:
+            scene = f"当前场景：{env.source}"
+        user_msg = f"{scene}\n\n{preface}\n{transcript}"
         try:
             reply = await self._llm.complete(
                 system=system,
@@ -391,7 +401,11 @@ class Secretary:
         note = (payload.get("note") or "").strip()
 
         system = self._persona.core + "\n\n" + self._persona.reminder_mode
-        parts = ["Manager 让你提醒用户一件事。用你自己的口吻温柔地传达："]
+        if env.source == "telegram_group" or env.telegram_chat_id is not None:
+            scene_line = "当前场景：Telegram 群聊（可能有其他人或其他 agent 看得见你说的话）"
+        else:
+            scene_line = "当前场景：Telegram 私聊（只有老公一个人看得见）"
+        parts = [scene_line, "", "Manager 让你提醒用户一件事。用你自己的口吻温柔地传达："]
         if appointment:
             parts.append(f"- 事情: {appointment}")
         if when:
