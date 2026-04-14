@@ -343,6 +343,107 @@ class Intelligence:
 
         return f"unknown tool: {name}", True
 
+    async def handle(self, env: Envelope) -> AgentResult | None:
+        reason = env.routing_reason
+        if reason == "direct_dm":
+            return await self._run_chat_turn(env, self._persona.dm_mode)
+        if reason in ("mention", "focus"):
+            return await self._run_chat_turn(env, self._persona.group_addressed_mode)
+        if reason == "default_manager":
+            return await self._run_delegated_turn(env)
+        log.debug("intelligence: ignoring routing_reason=%s", reason)
+        return None
+
+    def _try_read_latest_report(self) -> dict[str, Any] | None:
+        dates = list_report_dates(self._reports_dir)
+        if not dates:
+            return None
+        try:
+            return read_report(self._reports_dir / f"{dates[0]}.json")
+        except (ValueError, OSError) as e:
+            log.warning(
+                "intelligence: failed to read latest report %s: %s",
+                dates[0], e,
+            )
+            return None
+
+    def _recent_messages(self, chat_id: int | None) -> list[Envelope]:
+        if chat_id is None or self._messages is None:
+            return []
+        return self._messages.recent_for_chat(
+            chat_id=chat_id, limit=self._config.transcript_window
+        )
+
+    async def _run_chat_turn(
+        self, env: Envelope, mode_section: str
+    ) -> AgentResult | None:
+        from project0.intelligence.summarizer_prompt import build_qa_user_prompt
+
+        latest = self._try_read_latest_report()
+        transcript = self._recent_messages(env.telegram_chat_id)
+        system = (
+            self._persona.core
+            + "\n\n" + mode_section
+            + "\n\n" + self._persona.tool_use_guide
+        )
+        initial_user_text = build_qa_user_prompt(
+            latest_report=latest,
+            current_date_local=datetime.now(tz=self._user_tz).date(),
+            recent_messages=transcript,
+            current_user_message=env.body,
+        )
+        return await self._run_loop(
+            system=system,
+            initial_user_text=initial_user_text,
+        )
+
+    async def _run_delegated_turn(self, env: Envelope) -> AgentResult | None:
+        from project0.intelligence.summarizer_prompt import build_delegated_user_prompt
+
+        payload = env.payload or {}
+        query = payload.get("query") or env.body or ""
+        latest = self._try_read_latest_report()
+        system = (
+            self._persona.core
+            + "\n\n" + self._persona.delegated_mode
+            + "\n\n" + self._persona.tool_use_guide
+        )
+        initial_user_text = build_delegated_user_prompt(
+            latest_report=latest,
+            current_date_local=datetime.now(tz=self._user_tz).date(),
+            query=query,
+        )
+        return await self._run_loop(
+            system=system,
+            initial_user_text=initial_user_text,
+        )
+
+    async def _run_loop(
+        self,
+        *,
+        system: str,
+        initial_user_text: str,
+    ) -> AgentResult | None:
+        from project0.agents._tool_loop import run_agentic_loop
+
+        loop = await run_agentic_loop(
+            llm=self._llm_qa,
+            system=system,
+            initial_user_text=initial_user_text,
+            tools=self._tool_specs,
+            dispatch_tool=self._dispatch_tool,
+            max_iterations=self._config.max_tool_iterations,
+            max_tokens=self._config.qa_max_tokens,
+        )
+        if loop.errored:
+            return None
+        # Intelligence never delegates — ignore turn_state.
+        return AgentResult(
+            reply_text=loop.final_text or "",
+            delegate_to=None,
+            handoff_text=None,
+        )
+
 
 # --- legacy stub (removed in Task 13 once Intelligence is fully wired) ------
 # Kept so registry.py still imports until register_intelligence exists.
