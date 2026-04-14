@@ -179,6 +179,14 @@ async def test_dm_with_latest_report_replies_from_context(tmp_path: Path):
     assert "n1" in result.reply_text
     # Should not have called the summarizer provider.
     assert intel._llm_summarizer.calls == []
+    # Verify the report JSON was actually injected into the initial QA user
+    # prompt — without this check the test would pass even if injection broke,
+    # because the "n1" in reply_text only proves the scripted FakeProvider
+    # returned that string, not that the model saw the report.
+    assert len(intel._llm_qa.tool_calls_log) == 1
+    initial_user_msg = intel._llm_qa.tool_calls_log[0]["messages"][0]
+    assert "n1" in initial_user_msg.content
+    assert "2026-04-15" in initial_user_msg.content
 
 
 @pytest.mark.asyncio

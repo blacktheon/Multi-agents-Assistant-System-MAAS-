@@ -32,10 +32,9 @@ log = logging.getLogger(__name__)
 
 async def generate_daily_report(
     *,
-    date: date,
+    target_date: date,
     source: TwitterSource,
     llm: LLMProvider,
-    summarizer_model: str,  # accepted for interface symmetry; provider has its own model
     summarizer_max_tokens: int,
     watchlist: Sequence[WatchEntry],
     reports_dir: Path,
@@ -46,11 +45,15 @@ async def generate_daily_report(
     """Fetch tweets from the watchlist, summarize via one LLM call,
     validate, write. Returns the written report dict.
 
+    The ``llm`` provider is expected to be pre-bound to the summarizer
+    model (Opus) at construction time — this function does not accept a
+    model override because ``LLMProvider.complete`` does not either.
+    ``main.py`` constructs a dedicated ``AnthropicProvider`` for this.
+
     Raises:
         TwitterSourceError: if ALL watchlist handles fail to fetch.
         ValueError: if the LLM returns malformed or schema-invalid JSON.
     """
-    del summarizer_model  # provider-bound; caller constructs the provider with Opus
     since = datetime.now(tz=user_tz) - timedelta(hours=timeline_since_hours)
 
     raw_tweets: list[Tweet] = []
@@ -81,7 +84,7 @@ async def generate_daily_report(
         raw_tweets=raw_tweets,
         watchlist_snapshot=watchlist_snapshot,
         errors=errors,
-        today_local=date,
+        today_local=target_date,
         user_tz_name=user_tz.key,
     )
 
@@ -94,7 +97,7 @@ async def generate_daily_report(
     report_dict = parse_json_strict(result_text)
 
     # Overwrite fields Python controls (LLM is told to leave these blank).
-    report_dict["date"] = date.isoformat()
+    report_dict["date"] = target_date.isoformat()
     report_dict["generated_at"] = datetime.now(tz=user_tz).isoformat()
     report_dict["user_tz"] = user_tz.key
     report_dict["watchlist_snapshot"] = watchlist_snapshot
@@ -107,7 +110,7 @@ async def generate_daily_report(
 
     validate_report_dict(report_dict)
 
-    out_path = reports_dir / f"{date.isoformat()}.json"
+    out_path = reports_dir / f"{target_date.isoformat()}.json"
     atomic_write_json(out_path, report_dict)
     log.info("wrote daily report to %s", out_path)
     return report_dict

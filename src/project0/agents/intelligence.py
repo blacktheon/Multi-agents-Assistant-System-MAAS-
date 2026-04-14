@@ -297,10 +297,9 @@ class Intelligence:
                 else datetime.now(tz=self._user_tz).date()
             )
             report = await generate_daily_report(
-                date=target_date,
+                target_date=target_date,
                 source=self._twitter,
                 llm=self._llm_summarizer,
-                summarizer_model=self._config.summarizer_model,
                 summarizer_max_tokens=self._config.summarizer_max_tokens,
                 watchlist=self._watchlist,
                 reports_dir=self._reports_dir,

@@ -93,10 +93,9 @@ async def test_happy_path_writes_valid_report(tmp_path: Path, tz: ZoneInfo):
     target_date = date(2026, 4, 15)
 
     report = await generate_daily_report(
-        date=target_date,
+        target_date=target_date,
         source=src,
         llm=llm,
-        summarizer_model="claude-opus-4-6",
         summarizer_max_tokens=16384,
         watchlist=watchlist,
         reports_dir=tmp_path,
@@ -135,10 +134,9 @@ async def test_partial_failure_records_errors_and_still_writes(tmp_path: Path, t
     ]
 
     report = await generate_daily_report(
-        date=date(2026, 4, 15),
+        target_date=date(2026, 4, 15),
         source=src,
         llm=llm,
-        summarizer_model="claude-opus-4-6",
         summarizer_max_tokens=16384,
         watchlist=watchlist,
         reports_dir=tmp_path,
@@ -165,10 +163,9 @@ async def test_total_failure_raises_and_writes_nothing(tmp_path: Path, tz: ZoneI
 
     with pytest.raises(TwitterSourceError, match="all"):
         await generate_daily_report(
-            date=date(2026, 4, 15),
+            target_date=date(2026, 4, 15),
             source=src,
             llm=llm,
-            summarizer_model="claude-opus-4-6",
             summarizer_max_tokens=16384,
             watchlist=watchlist,
             reports_dir=tmp_path,
@@ -190,10 +187,9 @@ async def test_malformed_llm_json_raises_value_error(tmp_path: Path, tz: ZoneInf
 
     with pytest.raises(ValueError, match="JSON"):
         await generate_daily_report(
-            date=date(2026, 4, 15),
+            target_date=date(2026, 4, 15),
             source=src,
             llm=llm,
-            summarizer_model="claude-opus-4-6",
             summarizer_max_tokens=16384,
             watchlist=watchlist,
             reports_dir=tmp_path,
@@ -213,10 +209,9 @@ async def test_schema_invalid_llm_json_raises_value_error(tmp_path: Path, tz: Zo
 
     with pytest.raises(ValueError):
         await generate_daily_report(
-            date=date(2026, 4, 15),
+            target_date=date(2026, 4, 15),
             source=src,
             llm=llm,
-            summarizer_model="claude-opus-4-6",
             summarizer_max_tokens=16384,
             watchlist=watchlist,
             reports_dir=tmp_path,
@@ -235,10 +230,9 @@ async def test_regenerating_same_date_overwrites(tmp_path: Path, tz: ZoneInfo):
 
     for _ in range(2):
         await generate_daily_report(
-            date=date(2026, 4, 15),
+            target_date=date(2026, 4, 15),
             source=src,
             llm=llm,
-            summarizer_model="claude-opus-4-6",
             summarizer_max_tokens=16384,
             watchlist=watchlist,
             reports_dir=tmp_path,
