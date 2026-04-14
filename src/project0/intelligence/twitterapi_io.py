@@ -23,6 +23,21 @@ log = logging.getLogger(__name__)
 
 _BASE_URL = "https://api.twitterapi.io"
 
+# Twitter's legacy "Fri Apr 10 22:58:13 +0000 2026" format that twitterapi.io
+# mirrors in the ``createdAt`` field. ISO 8601 is also tolerated as a fallback
+# in case the upstream ever normalizes (or for mocked tests that use ISO).
+_LEGACY_TWITTER_FMT = "%a %b %d %H:%M:%S %z %Y"
+
+
+def _parse_created_at(raw: str) -> datetime:
+    raw = raw.strip()
+    try:
+        return datetime.strptime(raw, _LEGACY_TWITTER_FMT)
+    except ValueError:
+        pass
+    # ISO 8601 fallback (with trailing 'Z' for UTC).
+    return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+
 
 class TwitterApiIoSource:
     def __init__(
@@ -69,7 +84,14 @@ class TwitterApiIoSource:
         except (ValueError, json.JSONDecodeError) as e:
             raise TwitterSourceError(f"malformed response for {handle}: {e}") from e
 
-        raw_tweets = data.get("tweets") or []
+        # twitterapi.io wraps everything in {status, code, msg, data: {tweets: [...]}}.
+        # Fall back to a flat ``tweets`` key so the mocked unit tests (which use
+        # a flat fixture for simplicity) keep working.
+        envelope = data.get("data")
+        if isinstance(envelope, dict):
+            raw_tweets = envelope.get("tweets") or []
+        else:
+            raw_tweets = data.get("tweets") or []
         if not isinstance(raw_tweets, list):
             raise TwitterSourceError(
                 f"malformed response for {handle}: 'tweets' is not a list"
@@ -106,8 +128,7 @@ class TwitterApiIoSource:
         url = str(raw.get("url") or f"https://x.com/{fallback_handle}/status/{tid}")
         text = str(raw.get("text") or "")
         created_at = str(raw["createdAt"])
-        # twitterapi.io uses ISO8601 with trailing 'Z' for UTC.
-        posted_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        posted_at = _parse_created_at(created_at)
         author = raw.get("author") or {}
         handle = str(author.get("userName") or fallback_handle).lstrip("@")
         return Tweet(

@@ -42,6 +42,59 @@ def _mock_transport(handler):
     return httpx.MockTransport(handler)
 
 
+_REAL_ENVELOPE_FIXTURE = {
+    # Mirrors the actual shape twitterapi.io returns (verified with a live
+    # call): wrapped in {status, code, msg, data: {...}} with Twitter's
+    # legacy date format in createdAt.
+    "status": "success",
+    "code": 0,
+    "msg": "success",
+    "data": {
+        "pin_tweet": None,
+        "tweets": [
+            {
+                "id": "2042738954550603884",
+                "url": "https://x.com/sama/status/2042738954550603884",
+                "text": "wrapped envelope, legacy date",
+                "createdAt": "Fri Apr 10 22:58:13 +0000 2026",
+                "author": {"userName": "sama"},
+                "replyCount": 2791,
+                "likeCount": 15683,
+                "retweetCount": 1227,
+            }
+        ],
+    },
+    "has_next_page": False,
+    "next_cursor": None,
+}
+
+
+@pytest.mark.asyncio
+async def test_fetch_user_timeline_real_envelope_and_legacy_date():
+    """Regression guard: real twitterapi.io wraps tweets in data.tweets and
+    uses Twitter's legacy "Fri Apr 10 22:58:13 +0000 2026" format. Both
+    the envelope unwrapping and the legacy date parser live in
+    twitterapi_io.py and must stay in sync with the live API."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_REAL_ENVELOPE_FIXTURE)
+
+    src = TwitterApiIoSource(api_key="sk-test", transport=_mock_transport(handler))
+    tweets = await src.fetch_user_timeline(
+        "sama",
+        since=datetime(2026, 4, 1, tzinfo=UTC),
+        max_results=50,
+    )
+    await src.aclose()
+
+    assert len(tweets) == 1
+    t = tweets[0]
+    assert t.tweet_id == "2042738954550603884"
+    assert t.text == "wrapped envelope, legacy date"
+    assert t.posted_at.tzinfo is not None
+    assert t.posted_at.year == 2026 and t.posted_at.month == 4 and t.posted_at.day == 10
+    assert t.like_count == 15683
+
+
 @pytest.mark.asyncio
 async def test_fetch_user_timeline_happy_path():
     seen: dict = {}
