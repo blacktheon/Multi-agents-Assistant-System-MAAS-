@@ -14,6 +14,10 @@ async def _noop_manager(env: Envelope) -> AgentResult:
     return AgentResult(reply_text="[noop-manager] ok", delegate_to=None, handoff_text=None)
 
 
+async def _noop_intelligence(env: Envelope) -> AgentResult:
+    return AgentResult(reply_text="[noop-intelligence] ok", delegate_to=None, handoff_text=None)
+
+
 async def _news_delegating_manager(env: Envelope) -> AgentResult:
     """Manager that delegates on 'news' keyword (mirrors original stub logic)."""
     if "news" in env.body.lower():
@@ -38,6 +42,21 @@ def install_manager():
             reg.AGENT_REGISTRY["manager"] = original
         else:
             reg.AGENT_REGISTRY.pop("manager", None)
+
+
+@pytest.fixture(autouse=True)
+def install_intelligence():
+    """Install a minimal no-op intelligence into AGENT_REGISTRY for every test
+    in this module. Removed in teardown so the registry stays clean."""
+    original = reg.AGENT_REGISTRY.get("intelligence")
+    reg.AGENT_REGISTRY["intelligence"] = _noop_intelligence
+    try:
+        yield
+    finally:
+        if original is not None:
+            reg.AGENT_REGISTRY["intelligence"] = original
+        else:
+            reg.AGENT_REGISTRY.pop("intelligence", None)
 
 
 @pytest.fixture()
@@ -158,7 +177,7 @@ async def test_manager_delegation_produces_three_envelopes(
     # for itself, Manager staying visibly silent keeps the group chat clean.
     agents_sent_by = [s["agent"] for s in sender.sent]
     assert agents_sent_by == ["intelligence"]
-    assert "[intelligence-stub]" in sender.sent[0]["text"]  # type: ignore[operator]
+    assert "noop-intelligence" in sender.sent[0]["text"]  # type: ignore[operator]
 
     # Three rows in messages: user → manager, manager → intelligence
     # (internal), intelligence → user (reply). No handoff envelope.

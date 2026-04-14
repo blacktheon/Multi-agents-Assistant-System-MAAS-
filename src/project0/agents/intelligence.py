@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from project0.agents._tool_loop import TurnState
+from project0.envelope import AgentResult, Envelope
 from project0.intelligence.generate import generate_daily_report
 from project0.intelligence.report import list_report_dates, read_report
 from project0.intelligence.source import TwitterSource, TwitterSourceError
@@ -443,17 +444,3 @@ class Intelligence:
             delegate_to=None,
             handoff_text=None,
         )
-
-
-# --- legacy stub (removed in Task 13 once Intelligence is fully wired) ------
-# Kept so registry.py still imports until register_intelligence exists.
-
-from project0.envelope import AgentResult, Envelope  # noqa: E402
-
-
-async def intelligence_stub(env: Envelope) -> AgentResult:  # pragma: no cover
-    return AgentResult(
-        reply_text=f"[intelligence-stub] acknowledged: {env.body}",
-        delegate_to=None,
-        handoff_text=None,
-    )

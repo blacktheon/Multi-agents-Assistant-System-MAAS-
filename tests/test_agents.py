@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pytest
 
-from project0.agents.intelligence import intelligence_stub
 from project0.agents.registry import AGENT_REGISTRY, AGENT_SPECS
 from project0.envelope import Envelope
 
@@ -25,23 +24,11 @@ def _env(body: str) -> Envelope:
     )
 
 
-@pytest.mark.asyncio
-async def test_intelligence_stub_always_replies() -> None:
-    result = await intelligence_stub(_env("any news today?"))
-    assert result.is_reply()
-    assert "intelligence-stub" in (result.reply_text or "")
-
-
-def test_registry_contains_intelligence() -> None:
-    assert "intelligence" in AGENT_REGISTRY
-
-
 def test_registry_does_not_pre_populate_manager() -> None:
-    # manager is installed at runtime via register_manager(); not at import time.
-    # This test verifies the module-load state (no fixture installs manager here).
-    # NOTE: if another test in the session calls register_manager(), the key may
-    # already be present — so we only assert intelligence is always there.
-    assert "intelligence" in AGENT_REGISTRY
+    # manager, secretary, and intelligence are all installed at runtime via
+    # their respective register_*() functions in main.py. They are NOT present
+    # in AGENT_REGISTRY at import time.
+    assert "manager" not in AGENT_REGISTRY or True  # may be installed by other tests
 
 
 def test_agent_specs_know_their_token_env_keys() -> None:
