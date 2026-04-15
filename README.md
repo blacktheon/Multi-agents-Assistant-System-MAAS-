@@ -17,7 +17,7 @@ The planner. Owns your Google Calendar and makes scheduling decisions.
 - Public / private contrast: professional and precise in group chats, warmer and more familiar in private DMs
 - Runs a proactive **pulse** every 30 minutes that scans the next hour of your calendar and asks Secretary to deliver a reminder when something is coming up
 
-### Secretary · The conversational companion
+### 苏晚 · Secretary
 The one you can just talk to.
 
 - Passively sits in the group chat, replies when you mention her or DM her directly
