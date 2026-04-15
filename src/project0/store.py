@@ -64,6 +64,22 @@ CREATE TABLE IF NOT EXISTS chat_focus (
     current_agent     TEXT NOT NULL,
     updated_at        TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS llm_usage (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts                          TEXT    NOT NULL,
+    agent                       TEXT    NOT NULL,
+    model                       TEXT    NOT NULL,
+    input_tokens                INTEGER NOT NULL,
+    cache_creation_input_tokens INTEGER NOT NULL,
+    cache_read_input_tokens     INTEGER NOT NULL,
+    output_tokens               INTEGER NOT NULL,
+    envelope_id                 INTEGER,
+    purpose                     TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_llm_usage_ts       ON llm_usage(ts);
+CREATE INDEX IF NOT EXISTS ix_llm_usage_agent    ON llm_usage(agent, ts);
+CREATE INDEX IF NOT EXISTS ix_llm_usage_envelope ON llm_usage(envelope_id);
 """
 
 
@@ -130,6 +146,9 @@ class Store:
 
     def chat_focus(self) -> ChatFocusStore:
         return ChatFocusStore(self._conn)
+
+    def llm_usage(self) -> LLMUsageStore:
+        return LLMUsageStore(self._conn)
 
 
 class AgentMemory:
@@ -390,3 +409,69 @@ class ChatFocusStore:
         restart begins with Manager as the default route for every group,
         regardless of where the previous process left things."""
         self._conn.execute("DELETE FROM chat_focus")
+
+
+class LLMUsageStore:
+    """Append-only operational telemetry for LLM calls.
+
+    Written to exclusively from inside ``AnthropicProvider`` after a
+    successful API response. Read by the future WebUI token-usage page via
+    :meth:`summary_since`. Rows are never updated or deleted.
+    """
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def record(
+        self,
+        *,
+        agent: str,
+        model: str,
+        input_tokens: int,
+        cache_creation_input_tokens: int,
+        cache_read_input_tokens: int,
+        output_tokens: int,
+        envelope_id: int | None,
+        purpose: str,
+    ) -> int:
+        cur = self._conn.execute(
+            "INSERT INTO llm_usage "
+            "(ts, agent, model, input_tokens, cache_creation_input_tokens, "
+            " cache_read_input_tokens, output_tokens, envelope_id, purpose) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                _utc_now_iso(),
+                agent,
+                model,
+                input_tokens,
+                cache_creation_input_tokens,
+                cache_read_input_tokens,
+                output_tokens,
+                envelope_id,
+                purpose,
+            ),
+        )
+        return int(cur.lastrowid or 0)
+
+    def summary_since(self, ts: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT agent, "
+            "       SUM(input_tokens) AS input_tokens, "
+            "       SUM(cache_creation_input_tokens) AS cache_creation_input_tokens, "
+            "       SUM(cache_read_input_tokens) AS cache_read_input_tokens, "
+            "       SUM(output_tokens) AS output_tokens, "
+            "       COUNT(*) AS calls "
+            "FROM llm_usage WHERE ts >= ? GROUP BY agent ORDER BY agent",
+            (ts,),
+        ).fetchall()
+        return [
+            {
+                "agent": r[0],
+                "input_tokens": int(r[1] or 0),
+                "cache_creation_input_tokens": int(r[2] or 0),
+                "cache_read_input_tokens": int(r[3] or 0),
+                "output_tokens": int(r[4] or 0),
+                "calls": int(r[5] or 0),
+            }
+            for r in rows
+        ]
