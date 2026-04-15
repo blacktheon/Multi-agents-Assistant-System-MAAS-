@@ -43,6 +43,7 @@ class ProviderCall:
     system: str
     messages: list[Msg]
     max_tokens: int
+    thinking_budget_tokens: int | None = None
 
 
 class LLMProvider(Protocol):
@@ -52,6 +53,7 @@ class LLMProvider(Protocol):
         system: str,
         messages: list[Msg],
         max_tokens: int = 800,
+        thinking_budget_tokens: int | None = None,
     ) -> str:
         ...
 
@@ -85,9 +87,15 @@ class FakeProvider:
         system: str,
         messages: list[Msg],
         max_tokens: int = 800,
+        thinking_budget_tokens: int | None = None,
     ) -> str:
         self.calls.append(
-            ProviderCall(system=system, messages=list(messages), max_tokens=max_tokens)
+            ProviderCall(
+                system=system,
+                messages=list(messages),
+                max_tokens=max_tokens,
+                thinking_budget_tokens=thinking_budget_tokens,
+            )
         )
         if self.callable_ is not None:
             return self.callable_(system, messages)
@@ -148,6 +156,7 @@ class AnthropicProvider:
         system: str,
         messages: list[Msg],
         max_tokens: int = 800,
+        thinking_budget_tokens: int | None = None,
     ) -> str:
         sdk_messages: list[MessageParam] = [
             {"role": m.role, "content": m.content} for m in messages
@@ -159,12 +168,19 @@ class AnthropicProvider:
                 "cache_control": {"type": "ephemeral"},
             }
         ]
+        extra: dict[str, Any] = {}
+        if thinking_budget_tokens is not None:
+            extra["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": thinking_budget_tokens,
+            }
         try:
             resp = await self._client.messages.create(
                 model=self._model,
                 max_tokens=max_tokens,
                 system=system_block,
                 messages=sdk_messages,
+                **extra,
             )
         except Exception as e:
             log.exception("anthropic call failed")
