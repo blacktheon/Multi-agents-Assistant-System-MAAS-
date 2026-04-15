@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -80,6 +81,16 @@ CREATE TABLE IF NOT EXISTS llm_usage (
 CREATE INDEX IF NOT EXISTS ix_llm_usage_ts       ON llm_usage(ts);
 CREATE INDEX IF NOT EXISTS ix_llm_usage_agent    ON llm_usage(agent, ts);
 CREATE INDEX IF NOT EXISTS ix_llm_usage_envelope ON llm_usage(envelope_id);
+
+CREATE TABLE IF NOT EXISTS user_facts (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts            TEXT    NOT NULL,
+    author_agent  TEXT    NOT NULL,
+    fact_text     TEXT    NOT NULL,
+    topic         TEXT,
+    is_active     INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS ix_user_facts_active ON user_facts(is_active, ts);
 """
 
 
@@ -475,3 +486,114 @@ class LLMUsageStore:
             }
             for r in rows
         ]
+
+
+@dataclass(frozen=True)
+class UserFact:
+    id: int
+    ts: str
+    author_agent: str
+    fact_text: str
+    topic: str | None
+    is_active: bool
+
+
+class UserFactsReader:
+    """Read-only access to user_facts. Any agent may construct one."""
+
+    def __init__(self, agent_name: str, conn: sqlite3.Connection) -> None:
+        self._agent = agent_name
+        self._conn = conn
+
+    def active(self, limit: int = 30) -> list[UserFact]:
+        rows = self._conn.execute(
+            "SELECT id, ts, author_agent, fact_text, topic, is_active "
+            "FROM user_facts WHERE is_active=1 ORDER BY ts DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [
+            UserFact(
+                id=int(r[0]), ts=str(r[1]), author_agent=str(r[2]),
+                fact_text=str(r[3]),
+                topic=(str(r[4]) if r[4] is not None else None),
+                is_active=bool(r[5]),
+            )
+            for r in rows
+        ]
+
+    def all_including_inactive(self) -> list[UserFact]:
+        rows = self._conn.execute(
+            "SELECT id, ts, author_agent, fact_text, topic, is_active "
+            "FROM user_facts ORDER BY ts DESC"
+        ).fetchall()
+        return [
+            UserFact(
+                id=int(r[0]), ts=str(r[1]), author_agent=str(r[2]),
+                fact_text=str(r[3]),
+                topic=(str(r[4]) if r[4] is not None else None),
+                is_active=bool(r[5]),
+            )
+            for r in rows
+        ]
+
+    def as_prompt_block(self, max_tokens: int = 600) -> str:
+        """Render active facts as a Chinese bullet block for the cached system
+        prompt. Empty string if no active facts. Drops oldest active facts
+        from the rendered output (not storage) when over the cap. The cap is
+        estimated using a rough 4-chars-per-token heuristic — the goal is a
+        hard ceiling on prompt size, not exact token accounting."""
+        facts = self.active(limit=100)
+        if not facts:
+            return ""
+
+        max_chars = max_tokens * 4
+        header = "关于用户（由 Secretary 从对话中学到的长期记忆）：\n"
+        rendered_lines: list[str] = []
+        current_chars = len(header)
+        for f in facts:
+            line = f"- {f.fact_text}"
+            if f.topic:
+                line += f" [{f.topic}]"
+            line_with_newline = line + "\n"
+            if current_chars + len(line_with_newline) > max_chars:
+                break
+            rendered_lines.append(line_with_newline)
+            current_chars += len(line_with_newline)
+        return header + "".join(rendered_lines)
+
+
+class UserFactsWriter:
+    """Append-only writes to user_facts. Only constructible by Secretary.
+    author_agent is written server-side; callers cannot spoof."""
+
+    def __init__(
+        self, agent_name: str, conn: sqlite3.Connection | None = None
+    ) -> None:
+        if agent_name != "secretary":
+            raise PermissionError(
+                f"user_facts writer not allowed for agent={agent_name!r}; "
+                "only 'secretary' may write user facts in this sub-project"
+            )
+        self._agent = agent_name
+        self._conn = conn
+
+    def add(self, fact_text: str, topic: str | None = None) -> int:
+        if self._conn is None:
+            raise RuntimeError("UserFactsWriter requires a conn to write")
+        ts = _utc_now_iso()
+        cur = self._conn.execute(
+            "INSERT INTO user_facts (ts, author_agent, fact_text, topic, is_active) "
+            "VALUES (?, 'secretary', ?, ?, 1)",
+            (ts, fact_text, topic),
+        )
+        self._conn.commit()
+        return int(cur.lastrowid or 0)
+
+    def deactivate(self, fact_id: int) -> None:
+        if self._conn is None:
+            raise RuntimeError("UserFactsWriter requires a conn to write")
+        self._conn.execute(
+            "UPDATE user_facts SET is_active=0 WHERE id=?",
+            (fact_id,),
+        )
+        self._conn.commit()
