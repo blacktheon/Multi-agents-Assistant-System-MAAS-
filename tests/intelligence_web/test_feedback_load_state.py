@@ -94,6 +94,19 @@ def test_skips_unknown_event_type(tmp_path: Path) -> None:
     assert load_thumbs_state_for("2026-04-15", fb) == {"n1": 1}
 
 
+def test_event_stamped_far_from_report_date_still_found(tmp_path: Path) -> None:
+    """Regression: an event for a future/past report written today lands in
+    the click-time month file, not the report-date month file. Cross-file
+    scan must still find it. (Caught by the 6e smoke test.)"""
+    fb = tmp_path / "feedback"
+    fb.mkdir()
+    (fb / "2026-04.jsonl").write_text(
+        '{"ts":"2026-04-15T10:00:00+08:00","type":"thumbs","report_date":"2099-12-31","item_id":"n1","score":1}\n',
+        encoding="utf-8",
+    )
+    assert load_thumbs_state_for("2099-12-31", fb) == {"n1": 1}
+
+
 def test_skips_events_with_invalid_score(tmp_path: Path) -> None:
     fb = tmp_path / "feedback"
     fb.mkdir()

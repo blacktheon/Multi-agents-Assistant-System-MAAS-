@@ -45,3 +45,22 @@ def create_app(config: WebConfig) -> FastAPI:
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
     app.include_router(routes.router)
     return app
+
+
+def _dev_factory() -> FastAPI:
+    """Zero-arg factory for `uvicorn --factory` dev mode (scripts/dev_web.sh).
+
+    Builds an app pointing at the real `data/intelligence/reports/` directory
+    with dev-friendly defaults. Not used in production — `main.py` constructs
+    its own `WebConfig` from `prompts/intelligence.toml`."""
+    from zoneinfo import ZoneInfo
+
+    cfg = WebConfig(
+        public_base_url="http://localhost:8081",
+        bind_host="127.0.0.1",
+        bind_port=8081,
+        reports_dir=Path("data/intelligence/reports"),
+        feedback_dir=Path("data/intelligence/feedback"),
+        user_tz=ZoneInfo("Asia/Shanghai"),
+    )
+    return create_app(cfg)
