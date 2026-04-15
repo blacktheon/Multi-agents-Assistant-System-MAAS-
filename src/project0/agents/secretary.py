@@ -21,8 +21,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from project0.agents._tool_loop import run_agentic_loop
 from project0.envelope import AgentResult, Envelope
 from project0.llm.provider import LLMProvider, LLMProviderError, Msg, SystemBlocks
+from project0.llm.tools import ToolCall, ToolSpec
 from project0.store import (
     AgentMemory,
     MessagesStore,
@@ -187,6 +189,35 @@ def is_skip_sentinel(text: str, sentinels: list[str]) -> bool:
             if not tail or not tail[0].isalnum():
                 return True
     return False
+
+
+def remember_about_user_tool_spec() -> ToolSpec:
+    """Factory for Secretary's ``remember_about_user`` tool spec. Exposed at
+    module scope so tests can assert the schema without instantiating a
+    Secretary."""
+    return ToolSpec(
+        name="remember_about_user",
+        description=(
+            "Save a short factual note about the user to long-term memory. "
+            "Use when the user tells you something personal worth remembering "
+            "(birthday, preferences, current work, hobbies). Keep facts to one "
+            "short sentence. Do not save anything the user asked you to forget."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "fact_text": {
+                    "type": "string",
+                    "description": "One short sentence stating the fact.",
+                },
+                "topic": {
+                    "type": "string",
+                    "description": "Optional tag, e.g. 'food', 'personal'.",
+                },
+            },
+            "required": ["fact_text"],
+        },
+    )
 
 
 class Secretary:
@@ -365,31 +396,101 @@ class Secretary:
         self._memory.set(self._cooldown_key("msgs_since_reply", chat_id), 0)
         self._memory.set(self._cooldown_key("chars_since_reply", chat_id), 0)
 
+    async def _run_with_tool_loop(
+        self,
+        *,
+        env: Envelope,
+        purpose: str,
+        mode: str,
+        initial_user_text: str,
+        max_tokens: int,
+    ) -> str | None:
+        """Run a bounded two-iteration-deep tool loop. Secretary has exactly
+        one tool (remember_about_user). A successful call writes to user_facts
+        and feeds the result back to the model, which then produces the final
+        reply. If the model emits no tool call, its text is the reply
+        directly. When the writer is not wired, the tool list is empty and
+        we fall back to a plain ``complete`` call — this preserves behavior
+        in tests / setups that don't wire the writer."""
+        system = self._assemble_system_blocks(mode=mode)
+
+        # No writer → no tool to expose. Fall back to plain complete so we
+        # don't feed an empty tools list to the provider.
+        if self._user_facts_writer is None:
+            try:
+                return await self._llm.complete(
+                    system=system,
+                    messages=[Msg(role="user", content=initial_user_text)],
+                    max_tokens=max_tokens,
+                    agent="secretary",
+                    purpose=purpose,
+                    envelope_id=env.id,
+                )
+            except LLMProviderError as e:
+                log.warning("secretary %s LLM call failed: %s", purpose, e)
+                return None
+
+        tools: list[ToolSpec] = [remember_about_user_tool_spec()]
+
+        async def _dispatch(call: ToolCall, _state: object) -> tuple[str, bool]:
+            if call.name == "remember_about_user":
+                writer = self._user_facts_writer
+                if writer is None:  # pragma: no cover — guarded above
+                    return ("writer not available", True)
+                fact = call.input.get("fact_text") or ""
+                topic = call.input.get("topic")
+                if not isinstance(fact, str) or not fact.strip():
+                    return ("fact_text required", True)
+                try:
+                    fid = writer.add(fact, topic=topic if isinstance(topic, str) else None)
+                except Exception as e:  # noqa: BLE001 — surface any write error to the model
+                    log.warning("user_facts write failed: %s", e)
+                    return (f"error: {e}", True)
+                return (f'{{"ok": true, "fact_id": {fid}}}', False)
+            return (f"unknown tool: {call.name}", True)
+
+        try:
+            result = await run_agentic_loop(
+                llm=self._llm,
+                system=system,
+                initial_user_text=initial_user_text,
+                tools=tools,
+                dispatch_tool=_dispatch,
+                max_iterations=2,
+                max_tokens=max_tokens,
+                agent="secretary",
+                purpose=purpose,
+                envelope_id=env.id,
+            )
+        except LLMProviderError as e:
+            log.warning("secretary tool loop failed: %s", e)
+            return None
+
+        if result.errored:
+            return None
+        return result.final_text
+
     async def _listener_llm_call(self, env: Envelope) -> AgentResult | None:
         chat_id = env.telegram_chat_id
         assert chat_id is not None
         transcript = self._load_transcript(chat_id)
-        system = self._assemble_system_blocks(mode="listener")
         user_msg = f"对话记录(最后一条是用户刚发的):\n{transcript}"
-        try:
-            reply = await self._llm.complete(
-                system=system,
-                messages=[Msg(role="user", content=user_msg)],
-                max_tokens=self._config.max_tokens_listener,
-                agent="secretary",
-                purpose="listener",
-                envelope_id=env.id,
-            )
-        except LLMProviderError as e:
-            log.warning("secretary listener LLM call failed: %s", e)
-            return None
 
-        if is_skip_sentinel(reply, self._config.skip_sentinels):
+        text = await self._run_with_tool_loop(
+            env=env,
+            purpose="listener",
+            mode="listener",
+            initial_user_text=user_msg,
+            max_tokens=self._config.max_tokens_listener,
+        )
+        if text is None:
+            return None
+        if is_skip_sentinel(text, self._config.skip_sentinels):
             log.info("secretary considered, passed (skip sentinel)")
             return None
 
         self._reset_cooldown_after_reply(chat_id)
-        return AgentResult(reply_text=reply, delegate_to=None, handoff_text=None)
+        return AgentResult(reply_text=text, delegate_to=None, handoff_text=None)
 
     async def _handle_addressed(self, env: Envelope) -> AgentResult | None:
         """Group path triggered by @mention or sticky focus. No cooldown.
@@ -426,9 +527,7 @@ class Secretary:
             transcript = self._load_dm_transcript(chat_id)
         else:
             transcript = self._load_transcript(chat_id)
-        system = self._assemble_system_blocks(
-            mode="dm" if env.source == "telegram_dm" else "addressed",
-        )
+        mode = "dm" if env.source == "telegram_dm" else "addressed"
         # Scene context so the model doesn't guess group vs DM. Secretary's
         # tone shifts between the two (flirtier in DM, more reserved in a
         # group with other agents listening), so getting this wrong is a
@@ -440,17 +539,15 @@ class Secretary:
         else:
             scene = f"当前场景：{env.source}"
         user_msg = f"{scene}\n\n{preface}\n{transcript}"
-        try:
-            reply = await self._llm.complete(
-                system=system,
-                messages=[Msg(role="user", content=user_msg)],
-                max_tokens=max_tokens,
-                agent="secretary",
-                purpose="reply",
-                envelope_id=env.id,
-            )
-        except LLMProviderError as e:
-            log.warning("secretary addressed LLM call failed: %s", e)
+
+        text = await self._run_with_tool_loop(
+            env=env,
+            purpose="reply",
+            mode=mode,
+            initial_user_text=user_msg,
+            max_tokens=max_tokens,
+        )
+        if text is None:
             return None
 
         # Reset group cooldown when Secretary speaks directly so the listener
@@ -459,7 +556,7 @@ class Secretary:
         if chat_id is not None and env.source == "telegram_group":
             self._reset_cooldown_after_reply(chat_id)
 
-        return AgentResult(reply_text=reply, delegate_to=None, handoff_text=None)
+        return AgentResult(reply_text=text, delegate_to=None, handoff_text=None)
 
     async def _handle_reminder(self, env: Envelope) -> AgentResult | None:
         payload = env.payload or {}
@@ -467,7 +564,6 @@ class Secretary:
         when = (payload.get("when") or "").strip()
         note = (payload.get("note") or "").strip()
 
-        system = self._assemble_system_blocks(mode="reminder")
         if env.source == "telegram_group" or env.telegram_chat_id is not None:
             scene_line = "当前场景：Telegram 群聊（可能有其他人或其他 agent 看得见你说的话）"
         else:
@@ -482,17 +578,14 @@ class Secretary:
         parts.append("不要编造任何 Manager 没给你的细节。")
         user_msg = "\n".join(parts)
 
-        try:
-            reply = await self._llm.complete(
-                system=system,
-                messages=[Msg(role="user", content=user_msg)],
-                max_tokens=self._config.max_tokens_reply,
-                agent="secretary",
-                purpose="reminder",
-                envelope_id=env.id,
-            )
-        except LLMProviderError as e:
-            log.warning("secretary reminder LLM call failed: %s", e)
+        text = await self._run_with_tool_loop(
+            env=env,
+            purpose="reminder",
+            mode="reminder",
+            initial_user_text=user_msg,
+            max_tokens=self._config.max_tokens_reply,
+        )
+        if text is None:
             return None
 
-        return AgentResult(reply_text=reply, delegate_to=None, handoff_text=None)
+        return AgentResult(reply_text=text, delegate_to=None, handoff_text=None)
