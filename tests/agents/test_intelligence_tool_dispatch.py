@@ -92,7 +92,12 @@ def _valid_report_dict(date_str: str = "2026-04-15") -> dict:
     }
 
 
-def _build_intelligence(tmp_path: Path, *, src: FakeTwitterSource | None = None) -> Intelligence:
+def _build_intelligence(
+    tmp_path: Path,
+    *,
+    src: FakeTwitterSource | None = None,
+    public_base_url: str = "http://test.local:8080",
+) -> Intelligence:
     if src is None:
         src = FakeTwitterSource(timelines={"sama": [_tweet("sama", "1", 2)]})
     llm_summarizer = FakeProvider(responses=[json.dumps(_valid_report_dict())])
@@ -107,6 +112,7 @@ def _build_intelligence(tmp_path: Path, *, src: FakeTwitterSource | None = None)
         watchlist=[WatchEntry(handle="sama", tags=(), notes="")],
         reports_dir=tmp_path,
         user_tz=ZoneInfo("Asia/Shanghai"),
+        public_base_url=public_base_url,
     )
 
 
@@ -203,3 +209,68 @@ async def test_unknown_tool_returns_error(tmp_path: Path):
     content, is_err = await intel._dispatch_tool(call, TurnState())
     assert is_err is True
     assert "unknown" in content.lower()
+
+
+# --- get_report_link (6e) ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_report_link_latest_picks_newest(tmp_path: Path):
+    for d in ["2026-04-10", "2026-04-15"]:
+        atomic_write_json(tmp_path / f"{d}.json", _valid_report_dict(d))
+    intel = _build_intelligence(tmp_path, public_base_url="http://host:8080")
+    call = ToolCall(id="t1", name="get_report_link", input={"date": "latest"})
+    content, is_err = await intel._dispatch_tool(call, TurnState())
+    assert is_err is False
+    parsed = json.loads(content)
+    assert parsed["url"] == "http://host:8080/reports/2026-04-15"
+    assert parsed["date"] == "2026-04-15"
+
+
+@pytest.mark.asyncio
+async def test_get_report_link_specific_date_exists(tmp_path: Path):
+    atomic_write_json(tmp_path / "2026-04-15.json", _valid_report_dict("2026-04-15"))
+    intel = _build_intelligence(tmp_path, public_base_url="http://host:8080")
+    call = ToolCall(id="t1", name="get_report_link", input={"date": "2026-04-15"})
+    content, is_err = await intel._dispatch_tool(call, TurnState())
+    assert is_err is False
+    parsed = json.loads(content)
+    assert parsed["url"] == "http://host:8080/reports/2026-04-15"
+
+
+@pytest.mark.asyncio
+async def test_get_report_link_nonexistent_date_returns_error(tmp_path: Path):
+    intel = _build_intelligence(tmp_path, public_base_url="http://host:8080")
+    call = ToolCall(id="t1", name="get_report_link", input={"date": "2020-01-01"})
+    content, is_err = await intel._dispatch_tool(call, TurnState())
+    assert is_err is True
+    assert "2020-01-01" in content
+
+
+@pytest.mark.asyncio
+async def test_get_report_link_invalid_date_format_returns_error(tmp_path: Path):
+    intel = _build_intelligence(tmp_path, public_base_url="http://host:8080")
+    call = ToolCall(id="t1", name="get_report_link", input={"date": "not-a-date"})
+    content, is_err = await intel._dispatch_tool(call, TurnState())
+    assert is_err is True
+    assert "not-a-date" in content or "invalid" in content.lower()
+
+
+@pytest.mark.asyncio
+async def test_get_report_link_latest_with_no_reports_returns_error(tmp_path: Path):
+    intel = _build_intelligence(tmp_path, public_base_url="http://host:8080")
+    call = ToolCall(id="t1", name="get_report_link", input={"date": "latest"})
+    content, is_err = await intel._dispatch_tool(call, TurnState())
+    assert is_err is True
+    assert "no reports" in content.lower() or "generate" in content.lower()
+
+
+@pytest.mark.asyncio
+async def test_get_report_link_trims_trailing_slash_on_base_url(tmp_path: Path):
+    atomic_write_json(tmp_path / "2026-04-15.json", _valid_report_dict("2026-04-15"))
+    intel = _build_intelligence(tmp_path, public_base_url="http://host:8080/")
+    call = ToolCall(id="t1", name="get_report_link", input={"date": "2026-04-15"})
+    content, is_err = await intel._dispatch_tool(call, TurnState())
+    assert is_err is False
+    parsed = json.loads(content)
+    assert parsed["url"] == "http://host:8080/reports/2026-04-15"

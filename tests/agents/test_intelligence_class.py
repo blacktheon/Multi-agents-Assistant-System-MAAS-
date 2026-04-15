@@ -114,6 +114,7 @@ def _build_intelligence(
         watchlist=[WatchEntry(handle="sama", tags=(), notes="")],
         reports_dir=tmp_path,
         user_tz=ZoneInfo("Asia/Shanghai"),
+        public_base_url="http://test.local:8080",
     )
 
 
@@ -272,6 +273,7 @@ async def test_iteration_overflow_raises(tmp_path: Path):
         watchlist=[],
         reports_dir=tmp_path,
         user_tz=ZoneInfo("Asia/Shanghai"),
+        public_base_url="http://test.local:8080",
     )
     with pytest.raises(LLMProviderError, match="max_iterations"):
         await intel.handle(_dm_envelope("hi"))

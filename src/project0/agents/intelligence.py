@@ -205,6 +205,21 @@ _LIST_REPORTS_SCHEMA: dict[str, Any] = {
     "required": [],
 }
 
+_GET_REPORT_LINK_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "date": {
+            "type": "string",
+            "description": (
+                "Either a YYYY-MM-DD date string or the literal string "
+                "'latest'. If 'latest', the tool picks the newest report "
+                "that exists on disk."
+            ),
+        },
+    },
+    "required": ["date"],
+}
+
 
 # --- Intelligence class -------------------------------------------------------
 
@@ -226,6 +241,7 @@ class Intelligence:
         watchlist: list[WatchEntry],
         reports_dir: Path,
         user_tz: ZoneInfo,
+        public_base_url: str,
     ) -> None:
         self._llm_summarizer = llm_summarizer
         self._llm_qa = llm_qa
@@ -236,6 +252,7 @@ class Intelligence:
         self._watchlist = watchlist
         self._reports_dir = reports_dir
         self._user_tz = user_tz
+        self._public_base_url = public_base_url
         self._tool_specs = self._build_tool_specs()
 
     def _build_tool_specs(self) -> list[ToolSpec]:
@@ -269,6 +286,18 @@ class Intelligence:
                     "List available report dates (most recent first)."
                 ),
                 input_schema=_LIST_REPORTS_SCHEMA,
+            ),
+            ToolSpec(
+                name="get_report_link",
+                description=(
+                    "Return a stable URL to the webpage rendering of a daily "
+                    "report. Use this whenever the user asks to 'send me', "
+                    "'share', 'open', or 'give me a link to' a daily report. "
+                    "Paste the returned URL verbatim into your reply — do not "
+                    "shorten, paraphrase, or wrap it in a code block. Pass "
+                    "'latest' to get the most recent report."
+                ),
+                input_schema=_GET_REPORT_LINK_SCHEMA,
             ),
         ]
 
@@ -348,6 +377,33 @@ class Intelligence:
                     "item_count": len(rep.get("news_items", [])),
                 })
             return json.dumps(results, ensure_ascii=False), False
+
+        if name == "get_report_link":
+            raw = (inp.get("date") or "").strip()
+            if raw == "latest":
+                dates = list_report_dates(self._reports_dir)
+                if not dates:
+                    return (
+                        "No reports exist yet. Generate one first.",
+                        True,
+                    )
+                target = dates[0]
+            else:
+                try:
+                    target = date.fromisoformat(raw)
+                except ValueError:
+                    return (
+                        f"Invalid date: {raw!r}. Expected YYYY-MM-DD or 'latest'.",
+                        True,
+                    )
+                if not (self._reports_dir / f"{target.isoformat()}.json").exists():
+                    return (f"No report for {target.isoformat()}.", True)
+            base = self._public_base_url.rstrip("/")
+            url = f"{base}/reports/{target.isoformat()}"
+            return (
+                json.dumps({"url": url, "date": target.isoformat()}, ensure_ascii=False),
+                False,
+            )
 
         return f"unknown tool: {name}", True
 
