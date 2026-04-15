@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}{{ current_date }} · Intelligence{% endblock %}
+{% block content %}
+
+<nav class="date-nav">
+  {% if prev_href %}
+    <a href="{{ prev_href }}" class="nav-btn">‹</a>
+  {% else %}
+    <span class="nav-btn disabled">‹</span>
+  {% endif %}
+  <form class="date-picker" onsubmit="return false;">
+    <select onchange="location.href='/reports/'+this.value">
+      {% for d in all_dates %}
+        <option value="{{ d }}" {% if d == current_date %}selected{% endif %}>{{ d }}</option>
+      {% endfor %}
+    </select>
+  </form>
+  {% if next_href %}
+    <a href="{{ next_href }}" class="nav-btn">›</a>
+  {% else %}
+    <span class="nav-btn disabled">›</span>
+  {% endif %}
+</nav>
+
+<header class="report-header">
+  <h1>{{ report.date }}</h1>
+  <p class="meta">
+    Generated {{ report.generated_at | format_time }} ·
+    {{ report.stats.items_generated }} items ·
+    {{ report.stats.tweets_fetched }} tweets
+    {% if report.stats.errors %}
+      · <span class="err">{{ report.stats.errors | length }} fetch errors</span>
+    {% endif %}
+  </p>
+</header>
+
+<section class="news-items">
+  {% for item in report.news_items | sort_by_importance %}
+    <article class="item importance-{{ item.importance }}">
+      <div class="item-header">
+        <span class="importance-badge">{{ item.importance | upper }}</span>
+        <h2>{{ item.headline }}</h2>
+      </div>
+      <p class="summary">{{ item.summary }}</p>
+      {% if item.importance_reason %}
+        <p class="reason">{{ item.importance_reason }}</p>
+      {% endif %}
+      {% if item.source_tweets %}
+        <ul class="sources">
+          {% for src in item.source_tweets %}
+            <li><a href="{{ src.url }}" target="_blank" rel="noopener">@{{ src.handle }}</a></li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+      <div class="thumbs"
+           data-item-id="{{ item.id }}"
+           data-report-date="{{ current_date }}">
+        <button type="button"
+                class="thumb-up{% if feedback.get(item.id) == 1 %} active{% endif %}">
+          👍
+        </button>
+        <button type="button"
+                class="thumb-down{% if feedback.get(item.id) == -1 %} active{% endif %}">
+          👎
+        </button>
+      </div>
+    </article>
+  {% endfor %}
+</section>
+
+{% if report.suggested_accounts %}
+<section class="suggested">
+  <h2>Suggested accounts</h2>
+  <div class="suggested-grid">
+    {% for acc in report.suggested_accounts %}
+      <a class="suggested-card"
+         href="https://x.com/{{ acc.handle }}"
+         target="_blank" rel="noopener">
+        <div class="handle">@{{ acc.handle }}</div>
+        <div class="reason">{{ acc.reason }}</div>
+        <div class="cue">↗ open on X</div>
+      </a>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% endblock %}

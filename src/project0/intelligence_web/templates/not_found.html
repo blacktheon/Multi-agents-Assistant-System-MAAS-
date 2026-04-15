@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}No report · Intelligence{% endblock %}
+{% block content %}
+<section class="empty-state">
+  <h2>No report for {{ missing_date }}</h2>
+  <p>Ask 顾瑾 on Telegram to generate one, or check <a href="/history">the history page</a>.</p>
+</section>
+{% endblock %}
