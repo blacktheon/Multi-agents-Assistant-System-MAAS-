@@ -23,6 +23,7 @@ from anthropic import AsyncAnthropic
 from anthropic.types import MessageParam, TextBlockParam
 
 from project0.llm.tools import AssistantToolUseMsg, ToolCall, ToolResultMsg, ToolSpec, ToolUseResult
+from project0.store import LLMUsageStore
 
 log = logging.getLogger(__name__)
 
@@ -46,24 +47,71 @@ class ProviderCall:
     thinking_budget_tokens: int | None = None
 
 
+@dataclass(frozen=True)
+class SystemBlocks:
+    """Structured system prompt with optional two-breakpoint layout.
+
+    stable:  Segment 1. Large, cached, rarely busts (persona + mode + profile).
+    facts:   Segment 2, optional. Small, busts on conversational cadence
+             (user_facts block). None or empty string → no second breakpoint.
+    """
+
+    stable: str
+    facts: str | None = None
+
+
+def _render_system_param(
+    system: "str | SystemBlocks",
+    *,
+    cache_ttl: str = "ephemeral",
+) -> list[dict[str, Any]]:
+    """Turn the caller's system input into the SDK's `system` parameter shape.
+
+    Plain string → one cached text block. SystemBlocks with only `stable` →
+    one cached block. SystemBlocks with both → two blocks, each with its own
+    cache_control marker. Empty `facts` is treated as None.
+    """
+    cache_marker: dict[str, Any] = {"type": "ephemeral"}
+    if cache_ttl == "1h":
+        cache_marker = {"type": "ephemeral", "ttl": "1h"}
+
+    if isinstance(system, str):
+        return [{"type": "text", "text": system, "cache_control": cache_marker}]
+
+    out: list[dict[str, Any]] = [
+        {"type": "text", "text": system.stable, "cache_control": cache_marker}
+    ]
+    if system.facts:
+        out.append(
+            {"type": "text", "text": system.facts, "cache_control": cache_marker}
+        )
+    return out
+
+
 class LLMProvider(Protocol):
     async def complete(
         self,
         *,
-        system: str,
+        system: "str | SystemBlocks",
         messages: list[Msg],
         max_tokens: int = 800,
         thinking_budget_tokens: int | None = None,
+        agent: str,
+        purpose: str,
+        envelope_id: int | None = None,
     ) -> str:
         ...
 
     async def complete_with_tools(
         self,
         *,
-        system: str,
+        system: "str | SystemBlocks",
         messages: list[Msg | AssistantToolUseMsg | ToolResultMsg],
         tools: list[ToolSpec],
         max_tokens: int = 1024,
+        agent: str,
+        purpose: str,
+        envelope_id: int | None = None,
     ) -> ToolUseResult:
         ...
 
@@ -146,28 +194,34 @@ class AnthropicProvider:
     the long stable persona prompt in `system` and the volatile per-turn
     transcript in `messages` to benefit."""
 
-    def __init__(self, *, api_key: str, model: str) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        usage_store: LLMUsageStore,
+        cache_ttl: str = "ephemeral",
+    ) -> None:
         self._client = AsyncAnthropic(api_key=api_key)
         self._model = model
+        self._usage_store = usage_store
+        self._cache_ttl = cache_ttl
 
     async def complete(
         self,
         *,
-        system: str,
+        system: "str | SystemBlocks",
         messages: list[Msg],
         max_tokens: int = 800,
         thinking_budget_tokens: int | None = None,
+        agent: str,
+        purpose: str,
+        envelope_id: int | None = None,
     ) -> str:
         sdk_messages: list[MessageParam] = [
             {"role": m.role, "content": m.content} for m in messages
         ]
-        system_block: list[TextBlockParam] = [
-            {
-                "type": "text",
-                "text": system,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ]
+        system_block = _render_system_param(system, cache_ttl=self._cache_ttl)
         extra: dict[str, Any] = {}
         if thinking_budget_tokens is not None:
             # `adaptive` lets the model decide how much of the budget to
@@ -197,6 +251,29 @@ class AnthropicProvider:
             log.exception("anthropic call failed")
             raise LLMProviderError(f"anthropic {type(e).__name__}") from e
 
+        usage = getattr(final_message, "usage", None)
+        if usage is not None:
+            in_tok = int(getattr(usage, "input_tokens", 0) or 0)
+            cc_tok = int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
+            cr_tok = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
+            out_tok = int(getattr(usage, "output_tokens", 0) or 0)
+            self._usage_store.record(
+                agent=agent,
+                model=self._model,
+                input_tokens=in_tok,
+                cache_creation_input_tokens=cc_tok,
+                cache_read_input_tokens=cr_tok,
+                output_tokens=out_tok,
+                envelope_id=envelope_id,
+                purpose=purpose,
+            )
+            log.info(
+                "llm call agent=%s model=%s in=%d cc=%d cr=%d out=%d env=%s purpose=%s",
+                agent, self._model, in_tok, cc_tok, cr_tok, out_tok,
+                envelope_id if envelope_id is not None else "-",
+                purpose,
+            )
+
         for block in final_message.content:
             if getattr(block, "type", None) == "text":
                 text = getattr(block, "text", None)
@@ -207,10 +284,13 @@ class AnthropicProvider:
     async def complete_with_tools(
         self,
         *,
-        system: str,
+        system: "str | SystemBlocks",
         messages: list[Msg | AssistantToolUseMsg | ToolResultMsg],
         tools: list[ToolSpec],
         max_tokens: int = 1024,
+        agent: str,
+        purpose: str,
+        envelope_id: int | None = None,
     ) -> ToolUseResult:
         sdk_messages: list[dict[str, Any]] = []
         for m in messages:
@@ -249,13 +329,7 @@ class AnthropicProvider:
             for t in tools
         ]
 
-        system_block = [
-            {
-                "type": "text",
-                "text": system,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ]
+        system_block = _render_system_param(system, cache_ttl=self._cache_ttl)
 
         try:
             resp = await self._client.messages.create(
@@ -268,6 +342,29 @@ class AnthropicProvider:
         except Exception as e:
             log.exception("anthropic tool-use call failed")
             raise LLMProviderError(f"anthropic {type(e).__name__}") from e
+
+        usage = getattr(resp, "usage", None)
+        if usage is not None:
+            in_tok = int(getattr(usage, "input_tokens", 0) or 0)
+            cc_tok = int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
+            cr_tok = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
+            out_tok = int(getattr(usage, "output_tokens", 0) or 0)
+            self._usage_store.record(
+                agent=agent,
+                model=self._model,
+                input_tokens=in_tok,
+                cache_creation_input_tokens=cc_tok,
+                cache_read_input_tokens=cr_tok,
+                output_tokens=out_tok,
+                envelope_id=envelope_id,
+                purpose=purpose,
+            )
+            log.info(
+                "llm tool-call agent=%s model=%s in=%d cc=%d cr=%d out=%d env=%s purpose=%s",
+                agent, self._model, in_tok, cc_tok, cr_tok, out_tok,
+                envelope_id if envelope_id is not None else "-",
+                purpose,
+            )
 
         text_preamble: str | None = None
         tool_calls: list[ToolCall] = []
