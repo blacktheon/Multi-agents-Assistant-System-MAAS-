@@ -37,6 +37,20 @@ def _setup_logging(level: str) -> None:
         level=getattr(logging, level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s :: %(message)s",
     )
+    # Silence chatty third-party loggers. These emit one INFO line per HTTP
+    # request, which floods the console with Telegram long-polling pings
+    # and per-tweet-fetch lines during report generation. Project code at
+    # `project0.*` still respects the user's configured level.
+    for noisy in (
+        "httpx",
+        "httpcore",
+        "urllib3",
+        "telegram",
+        "telegram.ext",
+        "apscheduler",
+        "uvicorn.access",
+    ):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
 def _ensure_store_dir(store_path: str) -> None:
