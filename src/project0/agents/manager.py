@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from project0.agents._tool_loop import LoopResult, TurnState, run_agentic_loop  # re-exported for tests
 from project0.calendar.errors import GoogleCalendarError
 from project0.envelope import AgentResult, Envelope
-from project0.llm.provider import LLMProviderError
+from project0.llm.provider import LLMProviderError, SystemBlocks
 from project0.llm.tools import ToolCall, ToolSpec
 
 if TYPE_CHECKING:
@@ -450,12 +450,31 @@ class Manager:
         log.debug("manager: ignoring routing_reason=%s", reason)
         return None
 
-    def _build_system_prompt(self, mode_section: str) -> str:
-        return (
-            self._persona.core
-            + "\n\n" + mode_section
-            + "\n\n" + self._persona.tool_use_guide
-        )
+    def _assemble_system_blocks(self, mode_section: str) -> SystemBlocks:
+        """Build a two-segment system prompt. Segment 1 (stable) contains
+        persona_core + mode + tool_use_guide + profile. Segment 2 (facts)
+        contains the user_facts prompt block. A Secretary fact write busts
+        only Segment 2 on the next call; Segment 1 stays warm."""
+        stable_parts = [
+            self._persona.core,
+            "",
+            mode_section,
+            "",
+            self._persona.tool_use_guide,
+        ]
+        if self._user_profile is not None:
+            block = self._user_profile.as_prompt_block()
+            if block:
+                stable_parts.append("")
+                stable_parts.append(block)
+        stable = "\n".join(stable_parts)
+
+        facts: str | None = None
+        if self._user_facts_reader is not None:
+            b = self._user_facts_reader.as_prompt_block()
+            facts = b if b else None
+
+        return SystemBlocks(stable=stable, facts=facts)
 
     def _load_transcript(
         self, chat_id: int | None, *, source: str | None = None
@@ -488,7 +507,7 @@ class Manager:
     async def _run_chat_turn(
         self, env: Envelope, mode_section: str
     ) -> AgentResult | None:
-        system = self._build_system_prompt(mode_section)
+        system = self._assemble_system_blocks(mode_section)
         transcript = self._load_transcript(env.telegram_chat_id, source=env.source)
         preamble = self._current_time_preamble()
         initial_user_text = (
@@ -504,7 +523,7 @@ class Manager:
         )
 
     async def _run_pulse_turn(self, env: Envelope) -> AgentResult | None:
-        system = self._build_system_prompt(self._persona.pulse_mode)
+        system = self._assemble_system_blocks(self._persona.pulse_mode)
         payload = env.payload or {}
         pulse_name = payload.get("pulse_name", env.body)
         payload_json = json.dumps(payload, ensure_ascii=False)
@@ -528,7 +547,7 @@ class Manager:
         self,
         *,
         env: Envelope,
-        system: str,
+        system: SystemBlocks,
         initial_user_text: str,
         max_tokens: int,
         is_pulse: bool,
