@@ -7,7 +7,7 @@ max_tokens_reply    = 1024
 max_tool_iterations = 8
 
 [context]
-transcript_window = 20
+transcript_window = 10
 
 # Scheduled pulses. Each [[pulse]] entry becomes one asyncio scheduler task.
 # `chat_id_env` names an environment variable whose value is the integer
