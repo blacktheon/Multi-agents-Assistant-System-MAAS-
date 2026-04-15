@@ -198,8 +198,11 @@ def build_qa_user_prompt(
     current_user_message: str,
 ) -> str:
     """Build the initial user message for an Intelligence chat turn.
-    Eagerly embeds the latest report so the model doesn't need a tool
-    call to see it. Flags staleness when the report date != today."""
+
+    The full daily report is NOT inlined here — the cached system prompt
+    carries a slim headline-only index, and the model fetches individual
+    items on demand via the ``get_report_item`` tool. This keeps per-call
+    input tokens bounded and the system-prompt cache warm across turns."""
     lines: list[str] = []
     lines.append(f"Today is {current_date_local.isoformat()}.")
     lines.append("")
@@ -217,9 +220,10 @@ def build_qa_user_prompt(
                 f"({current_date_local.isoformat()})。回答用户前请明确提到日期，"
                 f"避免把旧闻当成今天的事。"
             )
-        lines.append("")
-        lines.append("最新日报 JSON（用它回答用户关于「今天」/「最近」的问题）：")
-        lines.append(json.dumps(latest_report, ensure_ascii=False, indent=2))
+        lines.append(
+            "系统提示里已附上日报索引（headline 列表）。"
+            "要深入某条请调用 get_report_item 工具。"
+        )
 
     if recent_messages:
         lines.append("")
@@ -257,9 +261,10 @@ def build_delegated_user_prompt(
                 f"（最新日报是 {report_date}，今天是 "
                 f"{current_date_local.isoformat()}，请在回答中体现日期）"
             )
-        lines.append("")
-        lines.append("最新日报 JSON：")
-        lines.append(json.dumps(latest_report, ensure_ascii=False, indent=2))
+        lines.append(
+            "系统提示里已附上日报索引（headline 列表）。"
+            "要深入某条请调用 get_report_item 工具。"
+        )
     lines.append("")
     lines.append(f"查询：{query}")
     return "\n".join(lines)

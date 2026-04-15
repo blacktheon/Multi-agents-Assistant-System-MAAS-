@@ -84,8 +84,10 @@ def test_build_user_prompt_renders_errors():
     assert "HTTP 404" in out
 
 
-def test_build_qa_user_prompt_injects_latest_report_and_date_hints():
-    latest = {"date": "2026-04-15", "news_items": [{"id": "n1", "headline": "h"}]}
+def test_build_qa_user_prompt_references_report_date_and_slim_index():
+    latest = {"date": "2026-04-15", "news_items": [
+        {"id": "n1", "headline": "h", "summary": "DO NOT INLINE ME"}
+    ]}
     out = build_qa_user_prompt(
         latest_report=latest,
         current_date_local=date(2026, 4, 15),
@@ -93,8 +95,11 @@ def test_build_qa_user_prompt_injects_latest_report_and_date_hints():
         current_user_message="今天有什么 AI 消息？",
     )
     assert "2026-04-15" in out
-    assert "n1" in out
+    assert "get_report_item" in out
     assert "今天有什么 AI 消息？" in out
+    # Full item payload must NOT be inlined — slim index lives in the
+    # cached system prompt instead (see test_intelligence_slim_report).
+    assert "DO NOT INLINE ME" not in out
 
 
 def test_build_qa_user_prompt_flags_stale_report():

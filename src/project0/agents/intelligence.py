@@ -24,6 +24,7 @@ from project0.intelligence.generate import generate_daily_report
 from project0.intelligence.report import list_report_dates, read_report
 from project0.intelligence.source import TwitterSource, TwitterSourceError
 from project0.intelligence.watchlist import WatchEntry
+from project0.llm.provider import SystemBlocks
 from project0.llm.tools import ToolCall, ToolSpec
 
 if TYPE_CHECKING:
@@ -236,6 +237,21 @@ _GET_REPORT_LINK_SCHEMA: dict[str, Any] = {
     },
     "required": ["date"],
 }
+
+
+def _render_report_index(report: dict[str, Any]) -> str:
+    """Render the headline-only index for the cached system prompt.
+
+    The Q&A model sees only ``[id] headline`` lines, keeping the stable
+    system segment small. Full item detail (summaries, source tweets) is
+    fetched on demand via the ``get_report_item`` tool (Task 13)."""
+    date_str = report.get("date", "unknown")
+    lines = [f"今天的日报索引 ({date_str}):"]
+    for item in report.get("news_items", []):
+        item_id = item.get("id", "?")
+        headline = item.get("headline", "")
+        lines.append(f"[{item_id}] {headline}")
+    return "\n".join(lines)
 
 
 # --- Intelligence class -------------------------------------------------------
@@ -499,6 +515,43 @@ class Intelligence:
             chat_id=chat_id, limit=self._config.transcript_window
         )
 
+    def _assemble_system_blocks(
+        self, *, mode_section: str, report_date: str | None = None
+    ) -> SystemBlocks:
+        """Build the two-segment cached system prompt. Segment 1 (stable)
+        = persona_core + mode + tool_use_guide + slim report index +
+        profile. Segment 2 (facts) = user_facts block. The full report
+        content is NOT inlined — the Q&A model fetches item details
+        on-demand via the get_report_item tool (Task 13)."""
+        del report_date  # currently unused — loader always picks latest
+        parts = [
+            self._persona.core,
+            "",
+            mode_section,
+            "",
+            self._persona.tool_use_guide,
+        ]
+
+        latest = self._try_read_latest_report()
+        if latest is not None:
+            parts.append("")
+            parts.append(_render_report_index(latest))
+
+        if self._user_profile is not None:
+            pb = self._user_profile.as_prompt_block()
+            if pb:
+                parts.append("")
+                parts.append(pb)
+
+        stable = "\n".join(parts)
+
+        facts: str | None = None
+        if self._user_facts_reader is not None:
+            fb = self._user_facts_reader.as_prompt_block()
+            facts = fb if fb else None
+
+        return SystemBlocks(stable=stable, facts=facts)
+
     async def _run_chat_turn(
         self, env: Envelope, mode_section: str
     ) -> AgentResult | None:
@@ -506,11 +559,7 @@ class Intelligence:
 
         latest = self._try_read_latest_report()
         transcript = self._recent_messages(env.telegram_chat_id, source=env.source)
-        system = (
-            self._persona.core
-            + "\n\n" + mode_section
-            + "\n\n" + self._persona.tool_use_guide
-        )
+        system = self._assemble_system_blocks(mode_section=mode_section)
         initial_user_text = build_qa_user_prompt(
             latest_report=latest,
             current_date_local=datetime.now(tz=self._user_tz).date(),
@@ -529,10 +578,8 @@ class Intelligence:
         payload = env.payload or {}
         query = payload.get("query") or env.body or ""
         latest = self._try_read_latest_report()
-        system = (
-            self._persona.core
-            + "\n\n" + self._persona.delegated_mode
-            + "\n\n" + self._persona.tool_use_guide
+        system = self._assemble_system_blocks(
+            mode_section=self._persona.delegated_mode
         )
         initial_user_text = build_delegated_user_prompt(
             latest_report=latest,
@@ -549,7 +596,7 @@ class Intelligence:
         self,
         *,
         env: Envelope,
-        system: str,
+        system: SystemBlocks,
         initial_user_text: str,
     ) -> AgentResult | None:
         from project0.agents._tool_loop import run_agentic_loop
