@@ -441,11 +441,11 @@ Sub-projects completed (in order):
 - **6c Manager + pulse** — real Manager with calendar tools, pulse primitive
 - **6d Intelligence (core)** — Twitter ingestion, deterministic daily report pipeline, Q&A tool-use loop
 - **6e Intelligence delivery surface** — FastAPI webapp, thumbs feedback, `get_report_link` tool, extended thinking on the summarizer, daily pulse auto-generation
+- **Memory hardening + token cost cut** — Layer A user profile (YAML), narrow Layer D slice (Secretary-written user facts via `remember_about_user` tool), `llm_usage` instrumentation on every LLM call, two-breakpoint cache layout (`SystemBlocks`), Manager transcript shrink (20→10), Intelligence Q&A slim + on-demand `get_report_item` tool, env-toggled 1-hour cache TTL
 
 Next up:
 
-- **Memory layer hardening + token cost cut** — Layer A user profile from the master spec, lazy memory access via tools, persona pruning, transcript-window tuning. Pre-brainstorm notes at `docs/superpowers/notes/2026-04-16-memory-hardening-prenotes.md`.
-- **Memory hardening** — Layer A user profile, narrow Layer D slice (Secretary-written user facts), llm_usage instrumentation, two-breakpoint cache layout, Manager transcript shrink, Intelligence Q&A slim + get_report_item tool, env-toggled 1-hour cache TTL.
+- **WebUI token monitor + control panel** — first read of `llm_usage` instrumentation; cross-agent envelope trace viewer; config editor; approval flows. The Intelligence webapp is a narrow read-only subset.
 
 Further out (in rough master-spec order):
 
