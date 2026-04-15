@@ -66,6 +66,15 @@ async def report_by_date(request: Request, date_str: str) -> HTMLResponse:
     return _render_report_page(request, cfg, target)
 
 
+@router.get("/history", response_class=HTMLResponse)
+async def history(request: Request) -> HTMLResponse:
+    cfg = _cfg(request)
+    dates = list_report_dates(cfg.reports_dir)
+    return _templates(request).TemplateResponse(
+        request, "history.html", {"dates": dates}
+    )
+
+
 @router.get("/healthz", response_class=PlainTextResponse)
 async def healthz() -> str:
     return "ok"
