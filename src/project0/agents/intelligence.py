@@ -239,6 +239,40 @@ _GET_REPORT_LINK_SCHEMA: dict[str, Any] = {
 }
 
 
+_GET_REPORT_ITEM_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "item_id": {
+            "type": "string",
+            "description": "Item id from the headline index, e.g. 'r01' or 'n1'.",
+        },
+        "date": {
+            "type": "string",
+            "description": (
+                "Report date YYYY-MM-DD. Defaults to today's report "
+                "in the user's timezone."
+            ),
+        },
+    },
+    "required": ["item_id"],
+}
+
+
+def get_report_item_tool_spec() -> ToolSpec:
+    """Factory for the ``get_report_item`` tool spec. Exposed at module
+    scope so tests can assert the schema without instantiating an
+    Intelligence agent."""
+    return ToolSpec(
+        name="get_report_item",
+        description=(
+            "Fetch the full content of a single item from a daily report by "
+            "its id. Use when the user asks to dig deeper on a specific item "
+            "from the headline index shown in the system prompt."
+        ),
+        input_schema=_GET_REPORT_ITEM_SCHEMA,
+    )
+
+
 def _render_report_index(report: dict[str, Any]) -> str:
     """Render the headline-only index for the cached system prompt.
 
@@ -265,19 +299,19 @@ class Intelligence:
     def __init__(
         self,
         *,
-        llm_summarizer: "LLMProvider",
-        llm_qa: "LLMProvider",
+        llm_summarizer: LLMProvider,
+        llm_qa: LLMProvider,
         twitter: TwitterSource,
-        messages_store: "MessagesStore | None",
+        messages_store: MessagesStore | None,
         persona: IntelligencePersona,
         config: IntelligenceConfig,
         watchlist: list[WatchEntry],
         reports_dir: Path,
         user_tz: ZoneInfo,
         public_base_url: str,
-        user_profile: "UserProfile | None" = None,
-        user_facts_reader: "UserFactsReader | None" = None,
-        user_facts_writer: "UserFactsWriter | None" = None,
+        user_profile: UserProfile | None = None,
+        user_facts_reader: UserFactsReader | None = None,
+        user_facts_writer: UserFactsWriter | None = None,
     ) -> None:
         self._llm_summarizer = llm_summarizer
         self._llm_qa = llm_qa
@@ -326,6 +360,7 @@ class Intelligence:
                 ),
                 input_schema=_LIST_REPORTS_SCHEMA,
             ),
+            get_report_item_tool_spec(),
             ToolSpec(
                 name="get_report_link",
                 description=(
@@ -416,6 +451,58 @@ class Intelligence:
                     "item_count": len(rep.get("news_items", [])),
                 })
             return json.dumps(results, ensure_ascii=False), False
+
+        if name == "get_report_item":
+            item_id = inp.get("item_id")
+            if not item_id:
+                return (
+                    json.dumps({"error": "missing required field item_id"},
+                               ensure_ascii=False),
+                    True,
+                )
+            raw_date = inp.get("date")
+            if raw_date:
+                try:
+                    target = date.fromisoformat(raw_date)
+                except ValueError:
+                    return (
+                        json.dumps(
+                            {"error": f"invalid date {raw_date!r}, expected YYYY-MM-DD"},
+                            ensure_ascii=False,
+                        ),
+                        True,
+                    )
+            else:
+                target = datetime.now(tz=self._user_tz).date()
+            path = self._reports_dir / f"{target.isoformat()}.json"
+            if not path.exists():
+                return (
+                    json.dumps(
+                        {"error": f"no report for {target.isoformat()}"},
+                        ensure_ascii=False,
+                    ),
+                    True,
+                )
+            try:
+                report = read_report(path)
+            except (OSError, ValueError) as e:
+                return (
+                    json.dumps(
+                        {"error": f"failed to read report {target.isoformat()}: {e}"},
+                        ensure_ascii=False,
+                    ),
+                    True,
+                )
+            for item in report.get("news_items", []):
+                if item.get("id") == item_id:
+                    return (json.dumps(item, ensure_ascii=False), False)
+            return (
+                json.dumps(
+                    {"error": f"item_id {item_id!r} not found in report {target.isoformat()}"},
+                    ensure_ascii=False,
+                ),
+                True,
+            )
 
         if name == "get_report_link":
             raw = (inp.get("date") or "").strip()

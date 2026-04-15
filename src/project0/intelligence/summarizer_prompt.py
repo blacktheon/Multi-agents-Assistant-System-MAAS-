@@ -21,7 +21,6 @@ from typing import Any
 from project0.envelope import Envelope
 from project0.intelligence.source import Tweet
 
-
 SUMMARIZER_SYSTEM_PROMPT = """You are the Intelligence agent's daily-report summarizer for a Project 0
 multi-agent personal assistant. You take a batch of raw tweets from a
 watchlist and produce a structured daily report in JSON.

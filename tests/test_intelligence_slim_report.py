@@ -18,7 +18,7 @@ from project0.agents.intelligence import (
 )
 from project0.intelligence.fake_source import FakeTwitterSource
 from project0.llm.provider import FakeProvider
-from project0.store import UserFactsReader, UserProfile, Store
+from project0.store import Store, UserFactsReader, UserProfile
 
 
 def _persona() -> IntelligencePersona:

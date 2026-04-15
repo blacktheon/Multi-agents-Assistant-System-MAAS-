@@ -29,7 +29,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from project0.llm.provider import LLMProvider, LLMProviderError, Msg
+from project0.llm.provider import LLMProvider, LLMProviderError, Msg, SystemBlocks
 from project0.llm.tools import (
     AssistantToolUseMsg,
     ToolCall,
@@ -65,7 +65,7 @@ DispatchTool = Callable[[ToolCall, TurnState], Awaitable[tuple[str, bool]]]
 async def run_agentic_loop(
     *,
     llm: LLMProvider,
-    system: str,
+    system: str | SystemBlocks,
     initial_user_text: str,
     tools: list[ToolSpec],
     dispatch_tool: DispatchTool,

@@ -11,10 +11,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
-from project0.agents._tool_loop import LoopResult, TurnState, run_agentic_loop  # re-exported for tests
+from project0.agents._tool_loop import (  # re-exported for tests
+    TurnState,
+    run_agentic_loop,
+)
 from project0.calendar.errors import GoogleCalendarError
 from project0.envelope import AgentResult, Envelope
-from project0.llm.provider import LLMProviderError, SystemBlocks
+from project0.llm.provider import SystemBlocks
 from project0.llm.tools import ToolCall, ToolSpec
 
 if TYPE_CHECKING:
@@ -212,17 +215,17 @@ class Manager:
     def __init__(
         self,
         *,
-        llm: "LLMProvider | None",
-        calendar: "GoogleCalendar | None",
-        memory: "AgentMemory | None",
-        messages_store: "MessagesStore | None",
+        llm: LLMProvider | None,
+        calendar: GoogleCalendar | None,
+        memory: AgentMemory | None,
+        messages_store: MessagesStore | None,
         persona: ManagerPersona,
         config: ManagerConfig,
         user_tz: ZoneInfo = ZoneInfo("UTC"),
-        clock: "Callable[[], datetime] | None" = None,
-        user_profile: "UserProfile | None" = None,
-        user_facts_reader: "UserFactsReader | None" = None,
-        user_facts_writer: "UserFactsWriter | None" = None,
+        clock: Callable[[], datetime] | None = None,
+        user_profile: UserProfile | None = None,
+        user_facts_reader: UserFactsReader | None = None,
+        user_facts_writer: UserFactsWriter | None = None,
     ) -> None:
         self._llm = llm
         self._calendar = calendar
