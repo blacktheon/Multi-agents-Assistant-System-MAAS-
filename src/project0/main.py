@@ -28,7 +28,13 @@ from project0.intelligence_web.config import WebConfig
 from project0.llm.provider import AnthropicProvider, FakeProvider, LLMProvider
 from project0.orchestrator import Orchestrator
 from project0.pulse import load_pulse_entries, run_pulse_loop
-from project0.store import LLMUsageStore, Store
+from project0.store import (
+    LLMUsageStore,
+    Store,
+    UserFactsReader,
+    UserFactsWriter,
+    UserProfile,
+)
 from project0.telegram_io import (
     FakeBotSender,
     build_bot_applications,
@@ -161,7 +167,12 @@ def _build_llm_provider(settings: Settings, usage_store: LLMUsageStore) -> LLMPr
     model = os.environ.get("LLM_MODEL", "claude-sonnet-4-6").strip() or "claude-sonnet-4-6"
 
     if provider_name == "anthropic":
-        return AnthropicProvider(api_key=settings.anthropic_api_key, model=model, usage_store=usage_store)
+        return AnthropicProvider(
+            api_key=settings.anthropic_api_key,
+            model=model,
+            usage_store=usage_store,
+            cache_ttl=settings.anthropic_cache_ttl,
+        )
     if provider_name == "fake":
         log.warning("LLM_PROVIDER=fake — using FakeProvider. Not for production.")
         return FakeProvider(responses=["(fake provider response)"] * 10_000)
@@ -187,6 +198,15 @@ async def _run(settings: Settings) -> None:
     usage_store = LLMUsageStore(store.conn)
     llm = _build_llm_provider(settings, usage_store)
 
+    # Task 9: shared user profile + per-agent fact readers + single writer.
+    # UserProfile.load tolerates a missing file (logs a warning and returns
+    # an empty profile), so this is safe on fresh checkouts.
+    user_profile = UserProfile.load(Path("data/user_profile.yaml"))
+    secretary_facts_reader = UserFactsReader("secretary", store.conn)
+    manager_facts_reader = UserFactsReader("manager", store.conn)
+    intelligence_facts_reader = UserFactsReader("intelligence", store.conn)
+    secretary_facts_writer = UserFactsWriter("secretary", store.conn)
+
     # Construct Secretary and install it into both registries. This MUST
     # happen before the orchestrator handles any message — AGENT_SPECS
     # already lists secretary, so load_settings will have demanded its
@@ -199,6 +219,9 @@ async def _run(settings: Settings) -> None:
         messages_store=store.messages(),
         persona=persona,
         config=secretary_cfg,
+        user_profile=user_profile,
+        user_facts_reader=secretary_facts_reader,
+        user_facts_writer=secretary_facts_writer,
     )
     register_secretary(secretary.handle)
     log.info("secretary registered (model=%s)", secretary_cfg.model)
@@ -233,6 +256,9 @@ async def _run(settings: Settings) -> None:
         persona=manager_persona,
         config=manager_cfg,
         user_tz=settings.user_tz,
+        user_profile=user_profile,
+        user_facts_reader=manager_facts_reader,
+        user_facts_writer=None,
     )
     register_manager(manager.handle)
     log.info("manager registered (model=%s)", manager_cfg.model)
@@ -277,11 +303,13 @@ async def _run(settings: Settings) -> None:
         api_key=settings.anthropic_api_key,
         model=intelligence_cfg.summarizer_model,
         usage_store=usage_store,
+        cache_ttl=settings.anthropic_cache_ttl,
     )
     intelligence_llm_qa = AnthropicProvider(
         api_key=settings.anthropic_api_key,
         model=intelligence_cfg.qa_model,
         usage_store=usage_store,
+        cache_ttl=settings.anthropic_cache_ttl,
     )
 
     intelligence = Intelligence(
@@ -295,6 +323,9 @@ async def _run(settings: Settings) -> None:
         reports_dir=reports_dir,
         user_tz=settings.user_tz,
         public_base_url=web_config.public_base_url,
+        user_profile=user_profile,
+        user_facts_reader=intelligence_facts_reader,
+        user_facts_writer=None,
     )
     register_intelligence(intelligence.handle)
     log.info(

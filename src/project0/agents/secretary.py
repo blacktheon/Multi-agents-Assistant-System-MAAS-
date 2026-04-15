@@ -23,7 +23,13 @@ from typing import Any
 
 from project0.envelope import AgentResult, Envelope
 from project0.llm.provider import LLMProvider, LLMProviderError, Msg
-from project0.store import AgentMemory, MessagesStore
+from project0.store import (
+    AgentMemory,
+    MessagesStore,
+    UserFactsReader,
+    UserFactsWriter,
+    UserProfile,
+)
 
 log = logging.getLogger(__name__)
 
@@ -199,12 +205,18 @@ class Secretary:
         messages_store: MessagesStore,
         persona: SecretaryPersona,
         config: SecretaryConfig,
+        user_profile: UserProfile | None = None,
+        user_facts_reader: UserFactsReader | None = None,
+        user_facts_writer: UserFactsWriter | None = None,
     ) -> None:
         self._llm = llm
         self._memory = memory
         self._messages = messages_store
         self._persona = persona
         self._config = config
+        self._user_profile = user_profile
+        self._user_facts_reader = user_facts_reader
+        self._user_facts_writer = user_facts_writer
 
     async def handle(self, env: Envelope) -> AgentResult | None:
         reason = env.routing_reason

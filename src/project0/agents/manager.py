@@ -22,7 +22,13 @@ if TYPE_CHECKING:
 
     from project0.calendar.client import GoogleCalendar
     from project0.llm.provider import LLMProvider
-    from project0.store import AgentMemory, MessagesStore
+    from project0.store import (
+        AgentMemory,
+        MessagesStore,
+        UserFactsReader,
+        UserFactsWriter,
+        UserProfile,
+    )
 
 log = logging.getLogger(__name__)
 
@@ -214,6 +220,9 @@ class Manager:
         config: ManagerConfig,
         user_tz: ZoneInfo = ZoneInfo("UTC"),
         clock: "Callable[[], datetime] | None" = None,
+        user_profile: "UserProfile | None" = None,
+        user_facts_reader: "UserFactsReader | None" = None,
+        user_facts_writer: "UserFactsWriter | None" = None,
     ) -> None:
         self._llm = llm
         self._calendar = calendar
@@ -223,6 +232,9 @@ class Manager:
         self._config = config
         self._user_tz = user_tz
         self._clock = clock
+        self._user_profile = user_profile
+        self._user_facts_reader = user_facts_reader
+        self._user_facts_writer = user_facts_writer
         self._tool_specs = self._build_tool_specs()
 
     def _now_local(self) -> datetime:

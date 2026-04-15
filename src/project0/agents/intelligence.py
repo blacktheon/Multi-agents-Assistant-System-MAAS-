@@ -28,7 +28,12 @@ from project0.llm.tools import ToolCall, ToolSpec
 
 if TYPE_CHECKING:
     from project0.llm.provider import LLMProvider
-    from project0.store import MessagesStore
+    from project0.store import (
+        MessagesStore,
+        UserFactsReader,
+        UserFactsWriter,
+        UserProfile,
+    )
 
 log = logging.getLogger(__name__)
 
@@ -254,6 +259,9 @@ class Intelligence:
         reports_dir: Path,
         user_tz: ZoneInfo,
         public_base_url: str,
+        user_profile: "UserProfile | None" = None,
+        user_facts_reader: "UserFactsReader | None" = None,
+        user_facts_writer: "UserFactsWriter | None" = None,
     ) -> None:
         self._llm_summarizer = llm_summarizer
         self._llm_qa = llm_qa
@@ -265,6 +273,9 @@ class Intelligence:
         self._reports_dir = reports_dir
         self._user_tz = user_tz
         self._public_base_url = public_base_url
+        self._user_profile = user_profile
+        self._user_facts_reader = user_facts_reader
+        self._user_facts_writer = user_facts_writer
         self._tool_specs = self._build_tool_specs()
 
     def _build_tool_specs(self) -> list[ToolSpec]:
