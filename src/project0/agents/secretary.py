@@ -301,8 +301,22 @@ class Secretary:
         return "\n".join(lines)
 
     def _load_transcript(self, chat_id: int) -> str:
+        """Group-scoped transcript. Use only from listener_observation /
+        @mention paths, never from DM — DMs share a telegram_chat_id
+        across every bot the user opens, so DM transcripts must be
+        scoped by (chat_id, agent). See ``_load_dm_transcript``."""
         envs = self._messages.recent_for_chat(
             chat_id=chat_id, limit=self._config.transcript_window
+        )
+        return self._format_transcript(envs)
+
+    def _load_dm_transcript(self, chat_id: int) -> str:
+        """DM-scoped transcript. Filters by (chat_id, 'secretary') so that
+        Intelligence's and Manager's DM replies don't contaminate
+        Secretary's DM context even though they share the same
+        telegram_chat_id (the user's user_id)."""
+        envs = self._messages.recent_for_dm(
+            chat_id=chat_id, agent="secretary", limit=self._config.transcript_window
         )
         return self._format_transcript(envs)
 
@@ -363,7 +377,16 @@ class Secretary:
         preface: str,
     ) -> AgentResult | None:
         chat_id = env.telegram_chat_id
-        transcript = self._load_transcript(chat_id) if chat_id is not None else ""
+        if chat_id is None:
+            transcript = ""
+        elif env.source == "telegram_dm":
+            # DM path: Telegram reuses one chat_id across all bots this
+            # user DMs, so filter by (chat_id, secretary) to avoid
+            # pulling Intelligence/Manager DM content into Secretary's
+            # prompt. See store.recent_for_dm for details.
+            transcript = self._load_dm_transcript(chat_id)
+        else:
+            transcript = self._load_transcript(chat_id)
         system = self._persona.core + "\n\n" + mode_section
         # Scene context so the model doesn't guess group vs DM. Secretary's
         # tone shifts between the two (flirtier in DM, more reserved in a

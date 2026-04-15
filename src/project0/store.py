@@ -273,7 +273,13 @@ class MessagesStore:
 
     def recent_for_chat(self, *, chat_id: int, limit: int) -> list[Envelope]:
         """Return the most recent envelopes for a single Telegram chat,
-        oldest-first. Used by agents loading transcript context."""
+        oldest-first. Used by agents loading transcript context in GROUP
+        chats, where all agents and the user share one context.
+
+        DO NOT use this for DM context — Telegram reuses a single
+        chat_id (the user's user_id) across every bot the user DMs, so
+        the same chat_id bucket holds conversations with every agent.
+        Use ``recent_for_dm`` instead."""
         rows = self._conn.execute(
             """
             SELECT id, envelope_json FROM messages
@@ -282,6 +288,40 @@ class MessagesStore:
             LIMIT ?
             """,
             (chat_id, limit),
+        ).fetchall()
+        result: list[Envelope] = []
+        for r in rows:
+            env = Envelope.from_json(r["envelope_json"])
+            env.id = r["id"]
+            result.append(env)
+        result.reverse()
+        return result
+
+    def recent_for_dm(
+        self, *, chat_id: int, agent: str, limit: int
+    ) -> list[Envelope]:
+        """Return the most recent DM envelopes scoped to one (chat, agent)
+        pair, oldest-first.
+
+        Telegram assigns the same private chat_id (= user's user_id) to
+        every 1:1 DM the user opens with any bot, so filtering by
+        ``telegram_chat_id`` alone mixes Intelligence's DM transcript
+        with Secretary's DM transcript. This method adds the second
+        dimension: a message belongs to ``agent``'s DM with this user
+        iff it was either directed TO that agent (incoming user DM) or
+        sent FROM that agent (outbound reply). Listener observations
+        and cross-agent internal envelopes that mention ``agent`` as
+        ``to_agent`` are included because that is how Secretary's own
+        memory of the DM surfaces back to her."""
+        rows = self._conn.execute(
+            """
+            SELECT id, envelope_json FROM messages
+            WHERE telegram_chat_id = ?
+              AND (from_agent = ? OR to_agent = ?)
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (chat_id, agent, agent, limit),
         ).fetchall()
         result: list[Envelope] = []
         for r in rows:

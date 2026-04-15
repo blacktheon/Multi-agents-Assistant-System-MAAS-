@@ -421,3 +421,84 @@ def test_messages_recent_for_chat_respects_limit(tmp_path: Path) -> None:
 
     got = store.messages().recent_for_chat(chat_id=700, limit=3)
     assert [e.body for e in got] == ["msg-2", "msg-3", "msg-4"]
+
+
+def test_messages_recent_for_dm_isolates_by_agent(tmp_path: Path) -> None:
+    """Regression: Telegram assigns the same private chat_id (the user's
+    user_id) to every 1:1 DM that user has with any bot. A naive
+    ``recent_for_chat(chat_id=<user_id>)`` query mixes Intelligence's DM
+    transcript with Secretary's. ``recent_for_dm`` must scope by
+    ``(chat_id, agent)`` via ``from_agent = ? OR to_agent = ?`` so each
+    agent only sees its own DM conversation with the user.
+
+    Reproduces the bug reported in 6d where Secretary started using
+    Intelligence-style motion roleplay after the user chatted with
+    Intelligence in a DM under the same chat_id."""
+    from project0.envelope import Envelope
+    from project0.store import Store
+
+    store = Store(tmp_path / "t.db")
+    store.init_schema()
+
+    USER_ID = 7716133697
+
+    def user_dm(msg_id: int, ts: str, body: str, to_agent: str) -> Envelope:
+        return Envelope(
+            id=None, ts=ts, parent_id=None,
+            source="telegram_dm",
+            telegram_chat_id=USER_ID, telegram_msg_id=msg_id,
+            received_by_bot=to_agent,
+            from_kind="user", from_agent=None, to_agent=to_agent,
+            body=body, routing_reason="direct_dm",
+        )
+
+    def agent_reply(
+        msg_id: int | None, ts: str, body: str, from_agent: str, parent_id: int
+    ) -> Envelope:
+        return Envelope(
+            id=None, ts=ts, parent_id=parent_id,
+            source="internal",
+            telegram_chat_id=USER_ID, telegram_msg_id=msg_id,
+            received_by_bot=None,
+            from_kind="agent", from_agent=from_agent, to_agent="user",
+            body=body, routing_reason="outbound_reply",
+        )
+
+    # Interleaved DM conversation: user DMs intelligence, then secretary,
+    # then intelligence again. Every row shares the same telegram_chat_id.
+    i1 = store.messages().insert(user_dm(1, "2026-04-14T23:10:00Z", "查情报", "intelligence"))
+    assert i1 is not None
+    store.messages().insert(agent_reply(None, "2026-04-14T23:10:05Z", "*motion* 主人", "intelligence", i1.id))
+
+    s1 = store.messages().insert(user_dm(2, "2026-04-14T23:12:00Z", "我想你了", "secretary"))
+    assert s1 is not None
+    store.messages().insert(agent_reply(None, "2026-04-14T23:12:05Z", "宝贝~", "secretary", s1.id))
+
+    i2 = store.messages().insert(user_dm(3, "2026-04-14T23:14:00Z", "继续", "intelligence"))
+    assert i2 is not None
+    store.messages().insert(agent_reply(None, "2026-04-14T23:14:05Z", "*更多 motion*", "intelligence", i2.id))
+
+    secretary_view = store.messages().recent_for_dm(
+        chat_id=USER_ID, agent="secretary", limit=20
+    )
+    intel_view = store.messages().recent_for_dm(
+        chat_id=USER_ID, agent="intelligence", limit=20
+    )
+
+    sec_bodies = [e.body for e in secretary_view]
+    intel_bodies = [e.body for e in intel_view]
+
+    # Secretary only sees the single user→secretary DM and her own reply.
+    assert sec_bodies == ["我想你了", "宝贝~"]
+    # No intelligence leakage — no "*motion*" strings in Secretary's view.
+    assert not any("motion" in b for b in sec_bodies)
+
+    # Intelligence sees its own two exchanges, not the secretary one.
+    assert intel_bodies == ["查情报", "*motion* 主人", "继续", "*更多 motion*"]
+    assert "我想你了" not in intel_bodies
+    assert "宝贝~" not in intel_bodies
+
+    # Sanity: the old loader still returns everything (this is why the
+    # new method was needed in the first place).
+    everything = store.messages().recent_for_chat(chat_id=USER_ID, limit=20)
+    assert len(everything) == 6

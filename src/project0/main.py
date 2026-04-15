@@ -126,6 +126,62 @@ async def _run(settings: Settings) -> None:
     register_manager(manager.handle)
     log.info("manager registered (model=%s)", manager_cfg.model)
 
+    # --- 6d: Intelligence agent -------------------------------------------
+    from project0.agents.intelligence import (
+        Intelligence,
+        load_intelligence_config,
+        load_intelligence_persona,
+    )
+    from project0.agents.registry import register_intelligence
+    from project0.intelligence.twitterapi_io import TwitterApiIoSource
+    from project0.intelligence.watchlist import load_watchlist
+
+    intelligence_persona = load_intelligence_persona(Path("prompts/intelligence.md"))
+    intelligence_cfg = load_intelligence_config(Path("prompts/intelligence.toml"))
+    intelligence_watchlist = load_watchlist(Path("prompts/intelligence.toml"))
+
+    twitterapi_key = os.environ.get("TWITTERAPI_IO_API_KEY", "").strip()
+    if not twitterapi_key:
+        raise RuntimeError(
+            "TWITTERAPI_IO_API_KEY not set in environment — required by Intelligence agent (6d)"
+        )
+    twitter_source = TwitterApiIoSource(api_key=twitterapi_key)
+
+    reports_dir = Path("data/intelligence/reports")
+    reports_dir.mkdir(parents=True, exist_ok=True)
+
+    # Intelligence uses two LLM providers: Opus for the one-shot summarizer,
+    # Sonnet for the agentic Q&A tool-use loop. Both talk to Anthropic
+    # directly and do not go through _build_llm_provider (which is driven
+    # by env vars and returns a single provider).
+    intelligence_llm_summarizer = AnthropicProvider(
+        api_key=settings.anthropic_api_key,
+        model=intelligence_cfg.summarizer_model,
+    )
+    intelligence_llm_qa = AnthropicProvider(
+        api_key=settings.anthropic_api_key,
+        model=intelligence_cfg.qa_model,
+    )
+
+    intelligence = Intelligence(
+        llm_summarizer=intelligence_llm_summarizer,
+        llm_qa=intelligence_llm_qa,
+        twitter=twitter_source,
+        messages_store=store.messages(),
+        persona=intelligence_persona,
+        config=intelligence_cfg,
+        watchlist=intelligence_watchlist,
+        reports_dir=reports_dir,
+        user_tz=settings.user_tz,
+    )
+    register_intelligence(intelligence.handle)
+    log.info(
+        "intelligence registered (summarizer=%s, qa=%s, watchlist=%d)",
+        intelligence_cfg.summarizer_model,
+        intelligence_cfg.qa_model,
+        len(intelligence_watchlist),
+    )
+
     # Pulse scheduler entries for Manager.
     pulse_entries = load_pulse_entries(Path("prompts/manager.toml"))
     log.info(

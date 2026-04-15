@@ -42,6 +42,9 @@ class _FakeMessagesStore:
     def recent_for_chat(self, *, chat_id, limit):
         return []
 
+    def recent_for_dm(self, *, chat_id, agent, limit):
+        return []
+
 
 def _env_dm(body="hi"):
     return Envelope(
@@ -156,7 +159,7 @@ async def test_max_iterations_raises():
     cal.list_events = AsyncMock(return_value=[])
     mgr = _mgr(fake, calendar=cal, messages_store=_FakeMessagesStore())
 
-    with pytest.raises(LLMProviderError, match="max_tool_iterations"):
+    with pytest.raises(LLMProviderError, match="max_iterations"):
         await mgr.handle(_env_dm("loop forever"))
 
 

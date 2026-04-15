@@ -1,0 +1,128 @@
+# Intelligence agent config (6d). See docs/superpowers/specs/2026-04-15-intelligence-agent-design.md
+# for scope and rationale.
+
+[llm.summarizer]
+# Opus is used for the one-shot deterministic daily report synthesis.
+# Quality-sensitive clustering + importance ranking; single call per report.
+model      = "claude-opus-4-6"
+max_tokens = 16384
+
+[llm.qa]
+# Sonnet drives the agentic Q&A tool-use loop. Cheaper per-call; the model
+# reads a pre-built report rather than synthesizing one.
+model      = "claude-sonnet-4-6"
+max_tokens = 2048
+
+[context]
+transcript_window   = 10
+max_tool_iterations = 6
+
+[twitter]
+timeline_since_hours  = 24
+max_tweets_per_handle = 50
+
+# --- Seed watchlist (hand-curated for 6d) -----------------------------------
+#
+# Add/remove handles by editing this file and restarting the process. Dynamic
+# follows via chat are deferred to 6h (feedback loop). Good seeds are
+# first-party company accounts + a handful of trusted researchers.
+
+[[watch]]
+handle = "openai"
+tags   = ["ai-labs", "first-party"]
+notes  = "OpenAI official"
+
+[[watch]]
+handle = "anthropicai"
+tags   = ["ai-labs", "first-party"]
+notes  = "Anthropic official"
+
+[[watch]]
+handle = "googledeepmind"
+tags   = ["ai-labs", "first-party"]
+notes  = "Google DeepMind official"
+
+[[watch]]
+handle = "sama"
+tags   = ["ai-labs", "executive"]
+notes  = "Sam Altman"
+
+[[watch]]
+handle = "demishassabis"
+tags   = ["ai-labs", "executive"]
+notes  = "Demis Hassabis"
+
+[[watch]]
+handle = "karpathy"
+tags   = ["researcher"]
+notes  = "Andrej Karpathy"
+
+[[watch]]
+handle = "ylecun"
+tags   = ["researcher"]
+notes  = "Yann LeCun"
+
+[[watch]]
+handle = "jeffdean"
+tags   = ["researcher"]
+notes  = "Jeff Dean"
+
+[[watch]]
+handle = "ilyasut"
+tags   = ["researcher"]
+notes  = "Ilya Sutskever"
+
+[[watch]]
+handle = "arankomatsuzaki"
+tags   = ["researcher", "aggregator"]
+notes  = "Aran Komatsuzaki — paper aggregator"
+
+[[watch]]
+handle = "_akhaliq"
+tags   = ["aggregator"]
+notes  = "AK — arxiv daily summaries"
+
+[[watch]]
+handle = "huggingface"
+tags   = ["ai-labs", "first-party"]
+notes  = "Hugging Face official"
+
+[[watch]]
+handle = "mistralai"
+tags   = ["ai-labs", "first-party"]
+notes  = "Mistral AI official"
+
+[[watch]]
+handle = "xai"
+tags   = ["ai-labs", "first-party"]
+notes  = "xAI official"
+
+[[watch]]
+handle = "alibaba_qwen"
+tags   = ["ai-labs", "first-party"]
+notes  = "Qwen team"
+
+[[watch]]
+handle = "deepseek_ai"
+tags   = ["ai-labs", "first-party"]
+notes  = "DeepSeek"
+
+[[watch]]
+handle = "lmsysorg"
+tags   = ["benchmark"]
+notes  = "LMSYS Arena"
+
+[[watch]]
+handle = "swyx"
+tags   = ["commentary"]
+notes  = "swyx — industry commentary"
+
+[[watch]]
+handle = "simonw"
+tags   = ["commentary"]
+notes  = "Simon Willison"
+
+[[watch]]
+handle = "latentspacepod"
+tags   = ["podcast", "commentary"]
+notes  = "Latent Space podcast"

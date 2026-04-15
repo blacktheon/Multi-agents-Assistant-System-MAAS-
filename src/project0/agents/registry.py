@@ -8,17 +8,14 @@ Two dicts:
     dispatched, the orchestrator fans out a listener_observation envelope
     to every entry here whose name is not already the focus target.
 
-Manager and Secretary are class instances with dependencies, installed
-via ``register_manager`` / ``register_secretary`` from main.py at startup.
-Intelligence is still a plain async stub (until 6d).
-"""
-
+Manager, Secretary, and Intelligence are class instances with dependencies,
+installed via ``register_manager`` / ``register_secretary`` /
+``register_intelligence`` from main.py at startup."""
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from project0.agents.intelligence import intelligence_stub
 from project0.envelope import AgentResult, Envelope
 
 AgentFn = Callable[[Envelope], Awaitable[AgentResult]]
@@ -33,9 +30,9 @@ class AgentSpec:
 
 
 AGENT_REGISTRY: dict[str, AgentFn] = {
-    "intelligence": intelligence_stub,
     # "manager" installed by register_manager(...) in main.py.
     # "secretary" installed by register_secretary(...) in main.py.
+    # "intelligence" installed by register_intelligence(...) in main.py.
 }
 
 LISTENER_REGISTRY: dict[str, ListenerFn] = {
@@ -63,11 +60,7 @@ AGENT_SPECS: dict[str, AgentSpec] = {
 
 
 def register_manager(handle: AgentOptionalFn) -> None:
-    """Install Manager's ``handle`` into AGENT_REGISTRY. Adapts the
-    ``AgentResult | None`` return type to the ``AgentResult`` expected by
-    AGENT_REGISTRY by surfacing a fail-visible placeholder if handle()
-    returns None (which happens on unhandled routing reasons or on LLM
-    errors during a chat turn)."""
+    """Install Manager's ``handle`` into AGENT_REGISTRY + PULSE_REGISTRY."""
 
     async def agent_adapter(env: Envelope) -> AgentResult:
         result = await handle(env)
@@ -84,7 +77,7 @@ def register_manager(handle: AgentOptionalFn) -> None:
 
 
 def register_secretary(handle: ListenerFn) -> None:
-    """Install Secretary's ``handle`` into both registries (unchanged)."""
+    """Install Secretary's ``handle`` into both registries."""
 
     async def agent_adapter(env: Envelope) -> AgentResult:
         result = await handle(env)
@@ -98,3 +91,23 @@ def register_secretary(handle: ListenerFn) -> None:
 
     AGENT_REGISTRY["secretary"] = agent_adapter
     LISTENER_REGISTRY["secretary"] = handle
+
+
+def register_intelligence(handle: AgentOptionalFn) -> None:
+    """Install Intelligence's ``handle`` into AGENT_REGISTRY. Adapts the
+    ``AgentResult | None`` return type to the ``AgentResult`` expected by
+    AGENT_REGISTRY by surfacing a fail-visible placeholder if handle()
+    returns None (which happens on LLM errors or unhandled routing
+    reasons)."""
+
+    async def agent_adapter(env: Envelope) -> AgentResult:
+        result = await handle(env)
+        if result is None:
+            return AgentResult(
+                reply_text="(情报暂时不在状态...)",
+                delegate_to=None,
+                handoff_text=None,
+            )
+        return result
+
+    AGENT_REGISTRY["intelligence"] = agent_adapter

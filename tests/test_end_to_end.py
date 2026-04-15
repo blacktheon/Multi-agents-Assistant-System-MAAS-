@@ -30,6 +30,14 @@ async def _news_delegating_manager(env: Envelope) -> AgentResult:
     return AgentResult(reply_text="[noop-manager] ok", delegate_to=None, handoff_text=None)
 
 
+async def _noop_intelligence(env: Envelope) -> AgentResult:
+    return AgentResult(
+        reply_text=f"[noop-intelligence] acknowledged: {env.body}",
+        delegate_to=None,
+        handoff_text=None,
+    )
+
+
 @pytest.fixture(autouse=True)
 def install_manager():
     """Install a news-delegating manager for tests in this module."""
@@ -42,6 +50,20 @@ def install_manager():
             reg.AGENT_REGISTRY["manager"] = original
         else:
             reg.AGENT_REGISTRY.pop("manager", None)
+
+
+@pytest.fixture(autouse=True)
+def install_intelligence():
+    """Install a minimal no-op intelligence for tests in this module."""
+    original = reg.AGENT_REGISTRY.get("intelligence")
+    reg.AGENT_REGISTRY["intelligence"] = _noop_intelligence
+    try:
+        yield
+    finally:
+        if original is not None:
+            reg.AGENT_REGISTRY["intelligence"] = original
+        else:
+            reg.AGENT_REGISTRY.pop("intelligence", None)
 
 
 @pytest.mark.asyncio
@@ -71,7 +93,7 @@ async def test_news_flow_produces_exact_envelope_tree(store: Store) -> None:
     # is intentionally not emitted to Telegram: the delegate target
     # speaks for itself.
     assert [s["agent"] for s in sender.sent] == ["intelligence"]
-    assert sender.sent[0]["text"] == "[intelligence-stub] acknowledged: any news today?"
+    assert sender.sent[0]["text"] == "[noop-intelligence] acknowledged: any news today?"
 
     # --- messages table assertions ---
     rows = list(

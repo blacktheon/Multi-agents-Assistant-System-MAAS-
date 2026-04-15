@@ -30,3 +30,6 @@ tests/fixtures/google_calendar/*.local.json
 
 # Local git worktrees for isolated feature development
 .worktrees/
+
+# Intelligence agent runtime data (6d)
+data/intelligence/reports/
