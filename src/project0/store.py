@@ -571,9 +571,7 @@ class UserFactsWriter:
     """Append-only writes to user_facts. Only constructible by Secretary.
     author_agent is written server-side; callers cannot spoof."""
 
-    def __init__(
-        self, agent_name: str, conn: sqlite3.Connection | None = None
-    ) -> None:
+    def __init__(self, agent_name: str, conn: sqlite3.Connection) -> None:
         if agent_name != "secretary":
             raise PermissionError(
                 f"user_facts writer not allowed for agent={agent_name!r}; "
@@ -583,25 +581,19 @@ class UserFactsWriter:
         self._conn = conn
 
     def add(self, fact_text: str, topic: str | None = None) -> int:
-        if self._conn is None:
-            raise RuntimeError("UserFactsWriter requires a conn to write")
         ts = _utc_now_iso()
         cur = self._conn.execute(
             "INSERT INTO user_facts (ts, author_agent, fact_text, topic, is_active) "
             "VALUES (?, 'secretary', ?, ?, 1)",
             (ts, fact_text, topic),
         )
-        self._conn.commit()
         return int(cur.lastrowid or 0)
 
     def deactivate(self, fact_id: int) -> None:
-        if self._conn is None:
-            raise RuntimeError("UserFactsWriter requires a conn to write")
         self._conn.execute(
             "UPDATE user_facts SET is_active=0 WHERE id=?",
             (fact_id,),
         )
-        self._conn.commit()
 
 
 @dataclass

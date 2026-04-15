@@ -16,25 +16,24 @@ def store() -> Store:
 
 def test_writer_rejects_manager(store: Store) -> None:
     with pytest.raises(PermissionError) as e:
-        UserFactsWriter("manager")
+        UserFactsWriter("manager", store.conn)
     assert "manager" in str(e.value)
 
 
 def test_writer_rejects_intelligence(store: Store) -> None:
     with pytest.raises(PermissionError):
-        UserFactsWriter("intelligence")
+        UserFactsWriter("intelligence", store.conn)
 
 
 def test_writer_accepts_secretary(store: Store) -> None:
-    w = UserFactsWriter("secretary")
+    w = UserFactsWriter("secretary", store.conn)
     assert w is not None
 
 
 # --- CRUD ---
 
 def test_add_and_read(store: Store) -> None:
-    w = UserFactsWriter("secretary")
-    w._conn = store.conn  # type: ignore[attr-defined]
+    w = UserFactsWriter("secretary", store.conn)
     row_id = w.add("生日是3月14日", topic="personal")
     assert row_id > 0
     r = UserFactsReader("manager", store.conn)
