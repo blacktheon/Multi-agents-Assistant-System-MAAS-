@@ -90,6 +90,9 @@ class _StubMessagesStore:
     def recent_for_chat(self, *, chat_id: int, limit: int) -> list[Envelope]:
         return []
 
+    def recent_for_dm(self, *, chat_id: int, agent: str, limit: int) -> list[Envelope]:
+        return []
+
 
 def _build_intelligence(
     tmp_path: Path,

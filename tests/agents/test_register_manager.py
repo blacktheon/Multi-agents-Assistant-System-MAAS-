@@ -26,6 +26,9 @@ async def test_register_manager_installs_handle_in_registry():
         def recent_for_chat(self, *, chat_id, limit):
             return []
 
+        def recent_for_dm(self, *, chat_id, agent, limit):
+            return []
+
     mgr = Manager(llm=fake, calendar=None, memory=None,
                   messages_store=_Msgs(), persona=persona, config=config)
 

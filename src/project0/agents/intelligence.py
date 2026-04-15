@@ -367,9 +367,20 @@ class Intelligence:
             )
             return None
 
-    def _recent_messages(self, chat_id: int | None) -> list[Envelope]:
+    def _recent_messages(
+        self, chat_id: int | None, *, source: str | None = None
+    ) -> list[Envelope]:
+        """Load transcript envelopes for a chat. DM mode uses
+        ``recent_for_dm`` to scope by (chat_id, 'intelligence') because
+        Telegram reuses one chat_id across every bot a user DMs."""
         if chat_id is None or self._messages is None:
             return []
+        if source == "telegram_dm":
+            return self._messages.recent_for_dm(
+                chat_id=chat_id,
+                agent="intelligence",
+                limit=self._config.transcript_window,
+            )
         return self._messages.recent_for_chat(
             chat_id=chat_id, limit=self._config.transcript_window
         )
@@ -380,7 +391,7 @@ class Intelligence:
         from project0.intelligence.summarizer_prompt import build_qa_user_prompt
 
         latest = self._try_read_latest_report()
-        transcript = self._recent_messages(env.telegram_chat_id)
+        transcript = self._recent_messages(env.telegram_chat_id, source=env.source)
         system = (
             self._persona.core
             + "\n\n" + mode_section

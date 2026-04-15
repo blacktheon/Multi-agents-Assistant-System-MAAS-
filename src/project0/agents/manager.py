@@ -445,12 +445,25 @@ class Manager:
             + "\n\n" + self._persona.tool_use_guide
         )
 
-    def _load_transcript(self, chat_id: int | None) -> str:
+    def _load_transcript(
+        self, chat_id: int | None, *, source: str | None = None
+    ) -> str:
+        """Load transcript for a chat. In DM mode (``source='telegram_dm'``)
+        the result is scoped to this agent via ``recent_for_dm`` because
+        Telegram reuses one chat_id across every bot the user DMs. In
+        group mode the full shared transcript is returned."""
         if chat_id is None or self._messages is None:
             return ""
-        envs = self._messages.recent_for_chat(
-            chat_id=chat_id, limit=self._config.transcript_window
-        )
+        if source == "telegram_dm":
+            envs = self._messages.recent_for_dm(
+                chat_id=chat_id,
+                agent="manager",
+                limit=self._config.transcript_window,
+            )
+        else:
+            envs = self._messages.recent_for_chat(
+                chat_id=chat_id, limit=self._config.transcript_window
+            )
         lines: list[str] = []
         for e in envs:
             if e.from_kind == "user":
@@ -464,7 +477,7 @@ class Manager:
         self, env: Envelope, mode_section: str
     ) -> AgentResult | None:
         system = self._build_system_prompt(mode_section)
-        transcript = self._load_transcript(env.telegram_chat_id)
+        transcript = self._load_transcript(env.telegram_chat_id, source=env.source)
         preamble = self._current_time_preamble()
         initial_user_text = (
             f"{preamble}\n\n对话记录:\n{transcript}\n\n最新用户消息: {env.body}"
@@ -482,7 +495,7 @@ class Manager:
         payload = env.payload or {}
         pulse_name = payload.get("pulse_name", env.body)
         payload_json = json.dumps(payload, ensure_ascii=False)
-        transcript = self._load_transcript(env.telegram_chat_id)
+        transcript = self._load_transcript(env.telegram_chat_id, source=env.source)
         preamble = self._current_time_preamble()
         initial_user_text = (
             f"{preamble}\n\n定时脉冲被触发: {pulse_name}\n"

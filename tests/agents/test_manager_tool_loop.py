@@ -42,6 +42,9 @@ class _FakeMessagesStore:
     def recent_for_chat(self, *, chat_id, limit):
         return []
 
+    def recent_for_dm(self, *, chat_id, agent, limit):
+        return []
+
 
 def _env_dm(body="hi"):
     return Envelope(
