@@ -70,6 +70,35 @@ def test_thinking_budget_optional_defaults_none(tmp_path: Path):
     assert cfg.summarizer_thinking_budget is None
 
 
+def test_daily_pulse_hour_optional_defaults_none(tmp_path: Path):
+    """6e: daily_pulse_hour is optional; missing [pulse] section → None."""
+    p = _write(tmp_path, VALID_TOML)
+    cfg = load_intelligence_config(p)
+    assert cfg.daily_pulse_hour is None
+
+
+def test_daily_pulse_hour_loaded_when_present(tmp_path: Path):
+    """6e: when [pulse].daily_hour is set, it loads."""
+    toml_with_pulse = VALID_TOML + """
+[pulse]
+daily_hour = 10
+"""
+    p = _write(tmp_path, toml_with_pulse)
+    cfg = load_intelligence_config(p)
+    assert cfg.daily_pulse_hour == 10
+
+
+def test_daily_pulse_hour_out_of_range_raises(tmp_path: Path):
+    """6e: daily_hour must be 0-23."""
+    toml_bad = VALID_TOML + """
+[pulse]
+daily_hour = 25
+"""
+    p = _write(tmp_path, toml_bad)
+    with pytest.raises(RuntimeError, match="daily_hour"):
+        load_intelligence_config(p)
+
+
 def test_thinking_budget_loaded_when_present(tmp_path: Path):
     """6e: when [llm.summarizer].thinking_budget_tokens is set, it loads."""
     toml_with_budget = """

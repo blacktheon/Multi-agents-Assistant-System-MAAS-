@@ -22,6 +22,12 @@ max_tool_iterations = 6
 timeline_since_hours  = 24
 max_tweets_per_handle = 50
 
+[pulse]
+# Auto-generate the daily report at this local-time hour (0-23) if one
+# doesn't already exist for today. Set to disable by commenting out.
+# Runs in user_tz (configured in .env as USER_TIMEZONE).
+daily_hour = 10
+
 # --- Seed watchlist (hand-curated for 6d) -----------------------------------
 #
 # Add/remove handles by editing this file and restarting the process. Dynamic

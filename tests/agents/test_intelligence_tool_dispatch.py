@@ -265,6 +265,41 @@ async def test_get_report_link_latest_with_no_reports_returns_error(tmp_path: Pa
     assert "no reports" in content.lower() or "generate" in content.lower()
 
 
+# --- ensure_today_report (6e daily pulse) ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ensure_today_report_skips_when_report_exists(tmp_path: Path):
+    """If today's report file is already on disk, the pulse must skip
+    generation and return False — we don't want a pulse tick to clobber
+    a manually-generated report."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo as _ZI
+
+    today = datetime.now(tz=_ZI("Asia/Shanghai")).date()
+    atomic_write_json(tmp_path / f"{today.isoformat()}.json", _valid_report_dict(today.isoformat()))
+    intel = _build_intelligence(tmp_path)
+
+    generated = await intel.ensure_today_report()
+    assert generated is False
+
+
+@pytest.mark.asyncio
+async def test_ensure_today_report_generates_when_missing(tmp_path: Path):
+    """When no file exists for today, the pulse must call
+    generate_daily_report and return True."""
+    intel = _build_intelligence(tmp_path)
+    from datetime import datetime
+    from zoneinfo import ZoneInfo as _ZI
+
+    today = datetime.now(tz=_ZI("Asia/Shanghai")).date()
+    assert not (tmp_path / f"{today.isoformat()}.json").exists()
+
+    generated = await intel.ensure_today_report()
+    assert generated is True
+    assert (tmp_path / f"{today.isoformat()}.json").exists()
+
+
 @pytest.mark.asyncio
 async def test_get_report_link_trims_trailing_slash_on_base_url(tmp_path: Path):
     atomic_write_json(tmp_path / "2026-04-15.json", _valid_report_dict("2026-04-15"))

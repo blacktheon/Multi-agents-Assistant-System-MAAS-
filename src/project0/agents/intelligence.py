@@ -130,6 +130,7 @@ class IntelligenceConfig:
     max_tool_iterations: int
     timeline_since_hours: int
     max_tweets_per_handle: int
+    daily_pulse_hour: int | None = None
 
 
 def load_intelligence_config(path: Path) -> IntelligenceConfig:
@@ -155,6 +156,16 @@ def load_intelligence_config(path: Path) -> IntelligenceConfig:
     summarizer_section = data.get("llm", {}).get("summarizer", {})
     thinking_budget_raw = summarizer_section.get("thinking_budget_tokens")
 
+    pulse_section = data.get("pulse", {})
+    daily_pulse_hour_raw = pulse_section.get("daily_hour")
+    daily_pulse_hour: int | None = None
+    if daily_pulse_hour_raw is not None:
+        daily_pulse_hour = int(daily_pulse_hour_raw)
+        if not (0 <= daily_pulse_hour <= 23):
+            raise RuntimeError(
+                f"[pulse].daily_hour must be 0-23 in {path}, got {daily_pulse_hour}"
+            )
+
     return IntelligenceConfig(
         summarizer_model=str(_require("llm.summarizer", "model")),
         summarizer_max_tokens=int(_require("llm.summarizer", "max_tokens")),
@@ -167,6 +178,7 @@ def load_intelligence_config(path: Path) -> IntelligenceConfig:
         max_tool_iterations=int(_require("context", "max_tool_iterations")),
         timeline_since_hours=int(_require("twitter", "timeline_since_hours")),
         max_tweets_per_handle=int(_require("twitter", "max_tweets_per_handle")),
+        daily_pulse_hour=daily_pulse_hour,
     )
 
 
@@ -417,6 +429,33 @@ class Intelligence:
             return await self._run_delegated_turn(env)
         log.debug("intelligence: ignoring routing_reason=%s", reason)
         return None
+
+    async def ensure_today_report(self) -> bool:
+        """Generate today's daily report if none exists on disk yet.
+
+        Used by the daily pulse task in ``main.py`` to auto-generate reports
+        at a configured hour. Returns True if a new report was written,
+        False if today's report already existed. Raises whatever
+        ``generate_daily_report`` raises (TwitterSourceError, ValueError)
+        so the caller can log and retry on the next pulse tick."""
+        today = datetime.now(tz=self._user_tz).date()
+        path = self._reports_dir / f"{today.isoformat()}.json"
+        if path.exists():
+            return False
+        log.info("daily pulse: generating report for %s", today)
+        await generate_daily_report(
+            target_date=today,
+            source=self._twitter,
+            llm=self._llm_summarizer,
+            summarizer_max_tokens=self._config.summarizer_max_tokens,
+            summarizer_thinking_budget=self._config.summarizer_thinking_budget,
+            watchlist=self._watchlist,
+            reports_dir=self._reports_dir,
+            user_tz=self._user_tz,
+            timeline_since_hours=self._config.timeline_since_hours,
+            max_tweets_per_handle=self._config.max_tweets_per_handle,
+        )
+        return True
 
     def _try_read_latest_report(self) -> dict[str, Any] | None:
         dates = list_report_dates(self._reports_dir)

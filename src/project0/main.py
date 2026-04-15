@@ -10,7 +10,13 @@ import asyncio
 import logging
 import os
 import tomllib
+from datetime import datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
+
+if TYPE_CHECKING:
+    from project0.agents.intelligence import Intelligence
 
 from project0.agents.manager import Manager, load_manager_config, load_manager_persona
 from project0.agents.registry import AGENT_SPECS, register_manager, register_secretary
@@ -56,6 +62,53 @@ def _setup_logging(level: str) -> None:
 def _ensure_store_dir(store_path: str) -> None:
     p = Path(store_path)
     p.parent.mkdir(parents=True, exist_ok=True)
+
+
+async def _run_intelligence_daily_pulse(
+    *,
+    intelligence: Intelligence,
+    user_tz: ZoneInfo,
+    pulse_hour: int,
+    stop_event: asyncio.Event,
+) -> None:
+    """Daily pulse: at ``pulse_hour`` each day, generate today's daily
+    report if it doesn't already exist. Runs as an asyncio task inside
+    ``_run``'s TaskGroup; stops when ``stop_event`` is set. Errors in a
+    single generation (e.g. twitterapi.io outage) are logged and the loop
+    continues — we retry on the next pulse."""
+    while not stop_event.is_set():
+        now = datetime.now(tz=user_tz)
+        today = now.date()
+        target = datetime(
+            today.year, today.month, today.day, pulse_hour, tzinfo=user_tz
+        )
+        if now >= target:
+            # Past today's pulse window — check and generate now if needed.
+            try:
+                generated = await intelligence.ensure_today_report()
+                if generated:
+                    log.info("daily pulse: generated report for %s", today)
+                else:
+                    log.info(
+                        "daily pulse: report for %s already exists, skipping",
+                        today,
+                    )
+            except Exception:
+                log.exception("daily pulse: generation failed for %s", today)
+            # Schedule next pulse for tomorrow at pulse_hour.
+            target = target + timedelta(days=1)
+
+        wait_seconds = max((target - now).total_seconds(), 1.0)
+        log.info(
+            "daily pulse: next check at %s (in %ds)",
+            target.strftime("%Y-%m-%d %H:%M %Z"),
+            int(wait_seconds),
+        )
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=wait_seconds)
+            return  # stop_event was set — exit loop
+        except TimeoutError:
+            continue  # time to check again
 
 
 async def _run_web(
@@ -321,6 +374,21 @@ async def _run(settings: Settings) -> None:
             web_config.bind_host,
             web_config.bind_port,
         )
+
+        if intelligence_cfg.daily_pulse_hour is not None:
+            tg.create_task(
+                _run_intelligence_daily_pulse(
+                    intelligence=intelligence,
+                    user_tz=settings.user_tz,
+                    pulse_hour=intelligence_cfg.daily_pulse_hour,
+                    stop_event=stop_event,
+                )
+            )
+            log.info(
+                "intelligence daily pulse spawned: %02d:00 %s",
+                intelligence_cfg.daily_pulse_hour,
+                settings.user_tz.key,
+            )
 
         # Run forever until cancelled.
         await stop_event.wait()
