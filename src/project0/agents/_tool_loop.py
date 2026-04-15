@@ -71,6 +71,9 @@ async def run_agentic_loop(
     dispatch_tool: DispatchTool,
     max_iterations: int,
     max_tokens: int,
+    agent: str = "unknown",
+    purpose: str = "tool_loop",
+    envelope_id: int | None = None,
 ) -> LoopResult:
     turn_state = TurnState()
     messages: list = [Msg(role="user", content=initial_user_text)]
@@ -82,6 +85,9 @@ async def run_agentic_loop(
                 messages=messages,
                 tools=tools,
                 max_tokens=max_tokens,
+                agent=agent,
+                purpose=purpose,
+                envelope_id=envelope_id,
             )
         except LLMProviderError as e:
             log.warning("tool loop LLM call failed: %s", e)

@@ -34,6 +34,7 @@ async def test_fake_provider_replays_tool_use_script():
         system="sys",
         messages=[Msg(role="user", content="hi")],
         tools=_TOOLS,
+        agent="manager", purpose="tool_loop", envelope_id=None,
     )
     assert first.kind == "tool_use"
     assert first.tool_calls[0].id == "toolu_1"
@@ -48,6 +49,7 @@ async def test_fake_provider_replays_tool_use_script():
             ToolResultMsg(tool_use_id="toolu_1", content="42"),
         ],
         tools=_TOOLS,
+        agent="manager", purpose="tool_loop", envelope_id=None,
     )
     assert second.kind == "text"
     assert second.text == "all done"
@@ -63,4 +65,5 @@ async def test_fake_provider_exhausted_tool_script_raises():
             system="sys",
             messages=[Msg(role="user", content="hi")],
             tools=_TOOLS,
+            agent="manager", purpose="tool_loop", envelope_id=None,
         )

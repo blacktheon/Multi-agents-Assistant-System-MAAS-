@@ -94,6 +94,9 @@ async def generate_daily_report(
         messages=[Msg(role="user", content=user_prompt)],
         max_tokens=summarizer_max_tokens,
         thinking_budget_tokens=summarizer_thinking_budget,
+        agent="intelligence",
+        purpose="summarizer",
+        envelope_id=None,
     )
 
     report_dict = parse_json_strict(result_text)

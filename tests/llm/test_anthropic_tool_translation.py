@@ -10,6 +10,13 @@ from project0.llm.tools import (
     ToolResultMsg,
     ToolSpec,
 )
+from project0.store import LLMUsageStore, Store
+
+
+def _usage_store() -> LLMUsageStore:
+    s = Store(":memory:")
+    s.init_schema()
+    return LLMUsageStore(s.conn)
 
 
 def _fake_response_tool_use():
@@ -37,7 +44,7 @@ def _fake_response_text():
 
 @pytest.mark.asyncio
 async def test_anthropic_translates_messages_and_tools():
-    provider = AnthropicProvider(api_key="sk-test", model="claude-sonnet-4-6")
+    provider = AnthropicProvider(api_key="sk-test", model="claude-sonnet-4-6", usage_store=_usage_store())
     mock_create = AsyncMock(return_value=_fake_response_tool_use())
     provider._client.messages.create = mock_create  # type: ignore[method-assign]
 
@@ -61,6 +68,7 @@ async def test_anthropic_translates_messages_and_tools():
         messages=messages,
         tools=tools,
         max_tokens=512,
+        agent="manager", purpose="tool_loop", envelope_id=None,
     )
 
     assert result.kind == "tool_use"
@@ -94,11 +102,12 @@ async def test_anthropic_translates_messages_and_tools():
 
 @pytest.mark.asyncio
 async def test_anthropic_returns_text_variant_on_end_turn():
-    provider = AnthropicProvider(api_key="sk-test", model="claude-sonnet-4-6")
+    provider = AnthropicProvider(api_key="sk-test", model="claude-sonnet-4-6", usage_store=_usage_store())
     provider._client.messages.create = AsyncMock(return_value=_fake_response_text())  # type: ignore[method-assign]
 
     result = await provider.complete_with_tools(
-        system="s", messages=[Msg(role="user", content="hi")], tools=[]
+        system="s", messages=[Msg(role="user", content="hi")], tools=[],
+        agent="manager", purpose="tool_loop", envelope_id=None,
     )
     assert result.kind == "text"
     assert result.text == "all good"
@@ -107,11 +116,12 @@ async def test_anthropic_returns_text_variant_on_end_turn():
 
 @pytest.mark.asyncio
 async def test_anthropic_wraps_sdk_errors():
-    provider = AnthropicProvider(api_key="sk-test", model="claude-sonnet-4-6")
+    provider = AnthropicProvider(api_key="sk-test", model="claude-sonnet-4-6", usage_store=_usage_store())
     provider._client.messages.create = AsyncMock(  # type: ignore[method-assign]
         side_effect=RuntimeError("boom")
     )
     with pytest.raises(LLMProviderError):
         await provider.complete_with_tools(
-            system="s", messages=[Msg(role="user", content="hi")], tools=[]
+            system="s", messages=[Msg(role="user", content="hi")], tools=[],
+            agent="manager", purpose="tool_loop", envelope_id=None,
         )

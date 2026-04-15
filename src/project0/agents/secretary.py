@@ -337,6 +337,9 @@ class Secretary:
                 system=system,
                 messages=[Msg(role="user", content=user_msg)],
                 max_tokens=self._config.max_tokens_listener,
+                agent="secretary",
+                purpose="listener",
+                envelope_id=env.id,
             )
         except LLMProviderError as e:
             log.warning("secretary listener LLM call failed: %s", e)
@@ -404,6 +407,9 @@ class Secretary:
                 system=system,
                 messages=[Msg(role="user", content=user_msg)],
                 max_tokens=max_tokens,
+                agent="secretary",
+                purpose="reply",
+                envelope_id=env.id,
             )
         except LLMProviderError as e:
             log.warning("secretary addressed LLM call failed: %s", e)
@@ -443,6 +449,9 @@ class Secretary:
                 system=system,
                 messages=[Msg(role="user", content=user_msg)],
                 max_tokens=self._config.max_tokens_reply,
+                agent="secretary",
+                purpose="reminder",
+                envelope_id=env.id,
             )
         except LLMProviderError as e:
             log.warning("secretary reminder LLM call failed: %s", e)

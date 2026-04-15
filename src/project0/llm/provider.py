@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
 from anthropic import AsyncAnthropic
-from anthropic.types import MessageParam, TextBlockParam
+from anthropic.types import MessageParam
 
 from project0.llm.tools import AssistantToolUseMsg, ToolCall, ToolResultMsg, ToolSpec, ToolUseResult
 from project0.store import LLMUsageStore
@@ -119,34 +119,54 @@ class LLMProvider(Protocol):
 @dataclass
 class FakeProvider:
     """Test-only provider. Either pre-loaded with canned responses or driven
-    by a callable that can inspect inputs."""
+    by a callable. Records every call. Optionally writes usage rows to a
+    real LLMUsageStore when one is supplied — this lets tests exercise the
+    recording path without mocking AnthropicProvider."""
 
     responses: list[str] | None = None
     callable_: Callable[[str, list[Msg]], str] | None = None
     calls: list[ProviderCall] = field(default_factory=list)
     tool_responses: list[ToolUseResult] | None = None
     tool_calls_log: list[dict] = field(default_factory=list)
+    usage_store: LLMUsageStore | None = None
+    fake_usage: tuple[int, int, int, int] = (100, 0, 80, 20)
     _idx: int = 0
     _tool_idx: int = 0
 
     async def complete(
         self,
         *,
-        system: str,
+        system: "str | SystemBlocks",
         messages: list[Msg],
         max_tokens: int = 800,
         thinking_budget_tokens: int | None = None,
+        agent: str,
+        purpose: str,
+        envelope_id: int | None = None,
     ) -> str:
+        # Normalize system to a string for the call-log for test inspection.
+        sys_str = system if isinstance(system, str) else system.stable + (
+            "\n" + system.facts if system.facts else ""
+        )
         self.calls.append(
             ProviderCall(
-                system=system,
-                messages=list(messages),
+                system=sys_str, messages=list(messages),
                 max_tokens=max_tokens,
                 thinking_budget_tokens=thinking_budget_tokens,
             )
         )
+        if self.usage_store is not None:
+            in_tok, cc, cr, out_tok = self.fake_usage
+            self.usage_store.record(
+                agent=agent, model="fake",
+                input_tokens=in_tok,
+                cache_creation_input_tokens=cc,
+                cache_read_input_tokens=cr,
+                output_tokens=out_tok,
+                envelope_id=envelope_id, purpose=purpose,
+            )
         if self.callable_ is not None:
-            return self.callable_(system, messages)
+            return self.callable_(sys_str, messages)
         if self.responses is None:
             raise LLMProviderError("FakeProvider has neither responses nor callable_")
         if self._idx >= len(self.responses):
@@ -161,19 +181,33 @@ class FakeProvider:
     async def complete_with_tools(
         self,
         *,
-        system: str,
+        system: "str | SystemBlocks",
         messages: list[Msg | AssistantToolUseMsg | ToolResultMsg],
         tools: list[ToolSpec],
         max_tokens: int = 1024,
+        agent: str,
+        purpose: str,
+        envelope_id: int | None = None,
     ) -> ToolUseResult:
-        self.tool_calls_log.append(
-            {
-                "system": system,
-                "messages": list(messages),
-                "tools": list(tools),
-                "max_tokens": max_tokens,
-            }
+        sys_str = system if isinstance(system, str) else system.stable + (
+            "\n" + system.facts if system.facts else ""
         )
+        self.tool_calls_log.append({
+            "system": sys_str, "messages": list(messages),
+            "tools": list(tools), "max_tokens": max_tokens,
+            "agent": agent, "purpose": purpose,
+            "envelope_id": envelope_id,
+        })
+        if self.usage_store is not None:
+            in_tok, cc, cr, out_tok = self.fake_usage
+            self.usage_store.record(
+                agent=agent, model="fake",
+                input_tokens=in_tok,
+                cache_creation_input_tokens=cc,
+                cache_read_input_tokens=cr,
+                output_tokens=out_tok,
+                envelope_id=envelope_id, purpose=purpose,
+            )
         if self.tool_responses is None:
             raise LLMProviderError(
                 "FakeProvider.complete_with_tools called but tool_responses is None"

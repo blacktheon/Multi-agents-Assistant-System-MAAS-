@@ -7,6 +7,13 @@ SDK for long-running requests). Tests mock the streaming context manager.
 from unittest.mock import AsyncMock, MagicMock
 
 from project0.llm.provider import AnthropicProvider, FakeProvider, Msg
+from project0.store import LLMUsageStore, Store
+
+
+def _usage_store() -> LLMUsageStore:
+    s = Store(":memory:")
+    s.init_schema()
+    return LLMUsageStore(s.conn)
 
 
 def _make_mock_stream(*content_blocks: MagicMock) -> MagicMock:
@@ -46,6 +53,7 @@ async def test_fake_provider_records_thinking_budget_in_call() -> None:
         messages=[Msg(role="user", content="hi")],
         max_tokens=100,
         thinking_budget_tokens=4096,
+        agent="intelligence", purpose="summarizer", envelope_id=None,
     )
     assert fake.calls[0].thinking_budget_tokens == 4096
 
@@ -56,12 +64,13 @@ async def test_fake_provider_defaults_thinking_budget_to_none() -> None:
         system="sys",
         messages=[Msg(role="user", content="hi")],
         max_tokens=100,
+        agent="intelligence", purpose="summarizer", envelope_id=None,
     )
     assert fake.calls[0].thinking_budget_tokens is None
 
 
 async def test_anthropic_provider_passes_thinking_to_sdk() -> None:
-    provider = AnthropicProvider(api_key="k", model="claude-opus-4-6")
+    provider = AnthropicProvider(api_key="k", model="claude-opus-4-6", usage_store=_usage_store())
     stream_fn = _make_mock_stream(_text_block("hello"))
     provider._client = MagicMock()  # type: ignore[attr-defined]
     provider._client.messages = MagicMock()
@@ -72,6 +81,7 @@ async def test_anthropic_provider_passes_thinking_to_sdk() -> None:
         messages=[Msg(role="user", content="hi")],
         max_tokens=32768,
         thinking_budget_tokens=16384,
+        agent="intelligence", purpose="summarizer", envelope_id=None,
     )
 
     kwargs = stream_fn.call_args.kwargs
@@ -79,7 +89,7 @@ async def test_anthropic_provider_passes_thinking_to_sdk() -> None:
 
 
 async def test_anthropic_provider_omits_thinking_when_none() -> None:
-    provider = AnthropicProvider(api_key="k", model="claude-opus-4-6")
+    provider = AnthropicProvider(api_key="k", model="claude-opus-4-6", usage_store=_usage_store())
     stream_fn = _make_mock_stream(_text_block("hello"))
     provider._client = MagicMock()  # type: ignore[attr-defined]
     provider._client.messages = MagicMock()
@@ -89,6 +99,7 @@ async def test_anthropic_provider_omits_thinking_when_none() -> None:
         system="sys",
         messages=[Msg(role="user", content="hi")],
         max_tokens=100,
+        agent="intelligence", purpose="summarizer", envelope_id=None,
     )
 
     kwargs = stream_fn.call_args.kwargs
@@ -96,7 +107,7 @@ async def test_anthropic_provider_omits_thinking_when_none() -> None:
 
 
 async def test_anthropic_provider_skips_thinking_blocks_in_response() -> None:
-    provider = AnthropicProvider(api_key="k", model="claude-opus-4-6")
+    provider = AnthropicProvider(api_key="k", model="claude-opus-4-6", usage_store=_usage_store())
     stream_fn = _make_mock_stream(
         _thinking_block("internal reasoning"),
         _text_block("final answer"),
@@ -110,5 +121,6 @@ async def test_anthropic_provider_skips_thinking_blocks_in_response() -> None:
         messages=[Msg(role="user", content="hi")],
         max_tokens=32768,
         thinking_budget_tokens=16384,
+        agent="intelligence", purpose="summarizer", envelope_id=None,
     )
     assert result == "final answer"

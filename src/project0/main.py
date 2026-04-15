@@ -28,7 +28,7 @@ from project0.intelligence_web.config import WebConfig
 from project0.llm.provider import AnthropicProvider, FakeProvider, LLMProvider
 from project0.orchestrator import Orchestrator
 from project0.pulse import load_pulse_entries, run_pulse_loop
-from project0.store import Store
+from project0.store import LLMUsageStore, Store
 from project0.telegram_io import (
     FakeBotSender,
     build_bot_applications,
@@ -149,7 +149,7 @@ async def _run_web(
             await server_task
 
 
-def _build_llm_provider(settings: Settings) -> LLMProvider:
+def _build_llm_provider(settings: Settings, usage_store: LLMUsageStore) -> LLMProvider:
     """Construct the LLM provider based on LLM_PROVIDER env var.
 
     Instantiation does not hit the network; a bad Anthropic key surfaces
@@ -161,7 +161,7 @@ def _build_llm_provider(settings: Settings) -> LLMProvider:
     model = os.environ.get("LLM_MODEL", "claude-sonnet-4-6").strip() or "claude-sonnet-4-6"
 
     if provider_name == "anthropic":
-        return AnthropicProvider(api_key=settings.anthropic_api_key, model=model)
+        return AnthropicProvider(api_key=settings.anthropic_api_key, model=model, usage_store=usage_store)
     if provider_name == "fake":
         log.warning("LLM_PROVIDER=fake — using FakeProvider. Not for production.")
         return FakeProvider(responses=["(fake provider response)"] * 10_000)
@@ -181,8 +181,11 @@ async def _run(settings: Settings) -> None:
     store.chat_focus().clear_all()
     log.info("chat_focus cleared on startup")
 
-    # Build the LLM provider once; share it across agents.
-    llm = _build_llm_provider(settings)
+    # Build the LLM provider once; share it across agents. Task 9 will wire
+    # the usage store properly into a dedicated surface; for now it lives on
+    # the same sqlite connection as Store.
+    usage_store = LLMUsageStore(store.conn)
+    llm = _build_llm_provider(settings, usage_store)
 
     # Construct Secretary and install it into both registries. This MUST
     # happen before the orchestrator handles any message — AGENT_SPECS
@@ -273,10 +276,12 @@ async def _run(settings: Settings) -> None:
     intelligence_llm_summarizer = AnthropicProvider(
         api_key=settings.anthropic_api_key,
         model=intelligence_cfg.summarizer_model,
+        usage_store=usage_store,
     )
     intelligence_llm_qa = AnthropicProvider(
         api_key=settings.anthropic_api_key,
         model=intelligence_cfg.qa_model,
+        usage_store=usage_store,
     )
 
     intelligence = Intelligence(
