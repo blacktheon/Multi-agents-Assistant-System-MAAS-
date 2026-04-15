@@ -4,13 +4,24 @@ from __future__ import annotations
 
 from datetime import date
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
 
 from project0.intelligence.report import list_report_dates, read_report
 from project0.intelligence_web.config import WebConfig
-from project0.intelligence_web.feedback import load_thumbs_state_for
+from project0.intelligence_web.feedback import (
+    FeedbackEvent,
+    append_thumbs,
+    load_thumbs_state_for,
+)
 from project0.intelligence_web.rendering import build_report_context
+
+
+class ThumbsPayload(BaseModel):
+    report_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    item_id: str = Field(min_length=1, max_length=64)
+    score: int = Field(ge=-1, le=1)
 
 router = APIRouter()
 
@@ -73,6 +84,19 @@ async def history(request: Request) -> HTMLResponse:
     return _templates(request).TemplateResponse(
         request, "history.html", {"dates": dates}
     )
+
+
+@router.post("/api/feedback/thumbs")
+async def post_thumbs(payload: ThumbsPayload, request: Request) -> JSONResponse:
+    cfg = _cfg(request)
+    event = FeedbackEvent.thumbs(
+        report_date=payload.report_date,
+        item_id=payload.item_id,
+        score=payload.score,  # type: ignore[arg-type]
+        tz=cfg.user_tz,
+    )
+    append_thumbs(event, cfg.feedback_dir)
+    return JSONResponse({"ok": True})
 
 
 @router.get("/healthz", response_class=PlainTextResponse)
