@@ -123,6 +123,7 @@ def load_intelligence_persona(path: Path) -> IntelligencePersona:
 class IntelligenceConfig:
     summarizer_model: str
     summarizer_max_tokens: int
+    summarizer_thinking_budget: int | None
     qa_model: str
     qa_max_tokens: int
     transcript_window: int
@@ -151,9 +152,15 @@ def load_intelligence_config(path: Path) -> IntelligenceConfig:
             )
         return node[key]
 
+    summarizer_section = data.get("llm", {}).get("summarizer", {})
+    thinking_budget_raw = summarizer_section.get("thinking_budget_tokens")
+
     return IntelligenceConfig(
         summarizer_model=str(_require("llm.summarizer", "model")),
         summarizer_max_tokens=int(_require("llm.summarizer", "max_tokens")),
+        summarizer_thinking_budget=(
+            int(thinking_budget_raw) if thinking_budget_raw is not None else None
+        ),
         qa_model=str(_require("llm.qa", "model")),
         qa_max_tokens=int(_require("llm.qa", "max_tokens")),
         transcript_window=int(_require("context", "transcript_window")),
@@ -301,6 +308,7 @@ class Intelligence:
                 source=self._twitter,
                 llm=self._llm_summarizer,
                 summarizer_max_tokens=self._config.summarizer_max_tokens,
+                summarizer_thinking_budget=self._config.summarizer_thinking_budget,
                 watchlist=self._watchlist,
                 reports_dir=self._reports_dir,
                 user_tz=self._user_tz,

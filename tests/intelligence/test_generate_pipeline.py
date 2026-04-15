@@ -243,3 +243,48 @@ async def test_regenerating_same_date_overwrites(tmp_path: Path, tz: ZoneInfo):
 
     files = sorted(tmp_path.iterdir())
     assert [f.name for f in files] == ["2026-04-15.json"]
+
+
+@pytest.mark.asyncio
+async def test_generate_passes_thinking_budget_to_llm(tmp_path: Path, tz: ZoneInfo):
+    """6e: summarizer_thinking_budget flows through to llm.complete."""
+    src = FakeTwitterSource(timelines={"sama": [_tweet("sama", "1", 2)]})
+    llm = FakeProvider(responses=[_valid_llm_json()])
+    watchlist = [WatchEntry(handle="sama", tags=(), notes="")]
+
+    await generate_daily_report(
+        target_date=date(2026, 4, 15),
+        source=src,
+        llm=llm,
+        summarizer_max_tokens=32768,
+        summarizer_thinking_budget=16384,
+        watchlist=watchlist,
+        reports_dir=tmp_path,
+        user_tz=tz,
+        timeline_since_hours=24,
+        max_tweets_per_handle=50,
+    )
+
+    assert len(llm.calls) == 1
+    assert llm.calls[0].thinking_budget_tokens == 16384
+
+
+@pytest.mark.asyncio
+async def test_generate_thinking_budget_defaults_to_none(tmp_path: Path, tz: ZoneInfo):
+    src = FakeTwitterSource(timelines={"sama": [_tweet("sama", "1", 2)]})
+    llm = FakeProvider(responses=[_valid_llm_json()])
+    watchlist = [WatchEntry(handle="sama", tags=(), notes="")]
+
+    await generate_daily_report(
+        target_date=date(2026, 4, 15),
+        source=src,
+        llm=llm,
+        summarizer_max_tokens=16384,
+        watchlist=watchlist,
+        reports_dir=tmp_path,
+        user_tz=tz,
+        timeline_since_hours=24,
+        max_tweets_per_handle=50,
+    )
+
+    assert llm.calls[0].thinking_budget_tokens is None

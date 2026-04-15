@@ -61,3 +61,36 @@ model = "claude-opus-4-6"
 """)
     with pytest.raises(RuntimeError, match="max_tokens"):
         load_intelligence_config(p)
+
+
+def test_thinking_budget_optional_defaults_none(tmp_path: Path):
+    """6e: thinking_budget_tokens is optional; missing key → None."""
+    p = _write(tmp_path, VALID_TOML)
+    cfg = load_intelligence_config(p)
+    assert cfg.summarizer_thinking_budget is None
+
+
+def test_thinking_budget_loaded_when_present(tmp_path: Path):
+    """6e: when [llm.summarizer].thinking_budget_tokens is set, it loads."""
+    toml_with_budget = """
+[llm.summarizer]
+model = "claude-opus-4-6"
+max_tokens = 32768
+thinking_budget_tokens = 16384
+
+[llm.qa]
+model = "claude-sonnet-4-6"
+max_tokens = 2048
+
+[context]
+transcript_window = 10
+max_tool_iterations = 6
+
+[twitter]
+timeline_since_hours = 24
+max_tweets_per_handle = 50
+"""
+    p = _write(tmp_path, toml_with_budget)
+    cfg = load_intelligence_config(p)
+    assert cfg.summarizer_thinking_budget == 16384
+    assert cfg.summarizer_max_tokens == 32768

@@ -39,6 +39,7 @@ def _config() -> IntelligenceConfig:
     return IntelligenceConfig(
         summarizer_model="claude-opus-4-6",
         summarizer_max_tokens=16384,
+        summarizer_thinking_budget=None,
         qa_model="claude-sonnet-4-6",
         qa_max_tokens=2048,
         transcript_window=10,
