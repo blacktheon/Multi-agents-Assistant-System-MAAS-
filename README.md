@@ -445,6 +445,7 @@ Sub-projects completed (in order):
 Next up:
 
 - **Memory layer hardening + token cost cut** — Layer A user profile from the master spec, lazy memory access via tools, persona pruning, transcript-window tuning. Pre-brainstorm notes at `docs/superpowers/notes/2026-04-16-memory-hardening-prenotes.md`.
+- **Memory hardening** — Layer A user profile, narrow Layer D slice (Secretary-written user facts), llm_usage instrumentation, two-breakpoint cache layout, Manager transcript shrink, Intelligence Q&A slim + get_report_item tool, env-toggled 1-hour cache TTL.
 
 Further out (in rough master-spec order):
 
