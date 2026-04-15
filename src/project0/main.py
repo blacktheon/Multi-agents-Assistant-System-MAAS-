@@ -18,6 +18,7 @@ from project0.agents.secretary import Secretary, load_config, load_persona
 from project0.calendar.auth import load_or_acquire_credentials
 from project0.calendar.client import GoogleCalendar
 from project0.config import Settings, load_settings
+from project0.intelligence_web.config import WebConfig
 from project0.llm.provider import AnthropicProvider, FakeProvider, LLMProvider
 from project0.orchestrator import Orchestrator
 from project0.pulse import load_pulse_entries, run_pulse_loop
@@ -45,14 +46,15 @@ def _ensure_store_dir(store_path: str) -> None:
 
 async def _run_web(
     *,
-    web_config: "WebConfig",  # type: ignore[name-defined]  # forward ref; imported inside _run
+    web_config: WebConfig,
     stop_event: asyncio.Event,
 ) -> None:
     """Run the Intelligence webapp (6e) as an asyncio task alongside the bot
     pollers. Shares ``stop_event`` with the rest of ``_run`` so ``Ctrl-C``
     stops everything together."""
-    from project0.intelligence_web.app import create_app
     import uvicorn
+
+    from project0.intelligence_web.app import create_app
 
     app = create_app(web_config)
     config = uvicorn.Config(
@@ -65,9 +67,8 @@ async def _run_web(
     )
     server = uvicorn.Server(config)
     # main.py owns signals; prevent uvicorn from installing its own handlers.
-    # The attribute exists on uvicorn.Server at runtime but isn't exposed in
-    # the stubs; `setattr` sidesteps the attr-defined check.
-    setattr(server, "install_signal_handlers", lambda: None)
+    # The attribute exists on uvicorn.Server at runtime but isn't in the stubs.
+    server.install_signal_handlers = lambda: None  # type: ignore[attr-defined]
 
     server_task = asyncio.create_task(server.serve())
     try:
@@ -76,7 +77,7 @@ async def _run_web(
         server.should_exit = True
         try:
             await asyncio.wait_for(server_task, timeout=5.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             server.force_exit = True
             await server_task
 
@@ -146,7 +147,8 @@ async def _run(settings: Settings) -> None:
     )
     log.info(
         "google calendar ready (calendar_id=%s tz=%s)",
-        settings.google_calendar_id, settings.user_tz.key,
+        settings.google_calendar_id,
+        settings.user_tz.key,
     )
 
     # Manager (replaces the legacy stub that used to live in
@@ -182,14 +184,9 @@ async def _run(settings: Settings) -> None:
     # 6e: webapp config loaded from the same file, shared between the agent
     # (for building link URLs in get_report_link) and the webapp (for
     # binding and filesystem paths).
-    from project0.intelligence_web.config import WebConfig
-    _intel_toml_data = tomllib.loads(
-        Path("prompts/intelligence.toml").read_text(encoding="utf-8")
-    )
+    _intel_toml_data = tomllib.loads(Path("prompts/intelligence.toml").read_text(encoding="utf-8"))
     if "web" not in _intel_toml_data:
-        raise RuntimeError(
-            "prompts/intelligence.toml missing [web] section — required for 6e"
-        )
+        raise RuntimeError("prompts/intelligence.toml missing [web] section — required for 6e")
     web_config = WebConfig.from_toml_section(_intel_toml_data["web"])
 
     twitterapi_key = os.environ.get("TWITTERAPI_IO_API_KEY", "").strip()
@@ -245,9 +242,7 @@ async def _run(settings: Settings) -> None:
     # Sanity-check that every registered agent has a token.
     for agent_name in AGENT_SPECS:
         if agent_name not in settings.bot_tokens:
-            raise RuntimeError(
-                f"agent {agent_name!r} is registered but has no bot token in .env"
-            )
+            raise RuntimeError(f"agent {agent_name!r} is registered but has no bot token in .env")
 
     # Build orchestrator first; sender is attached after bot apps exist.
     # We construct a placeholder and swap in RealBotSender once built.
@@ -293,9 +288,7 @@ async def _run(settings: Settings) -> None:
     async with asyncio.TaskGroup() as tg:
         for name, app in apps.items():
             assert app.updater is not None
-            tg.create_task(
-                app.updater.start_polling(drop_pending_updates=True)
-            )
+            tg.create_task(app.updater.start_polling(drop_pending_updates=True))
             log.info("bot %s polling", name)
 
         for entry in pulse_entries:
