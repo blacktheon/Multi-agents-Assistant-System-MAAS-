@@ -170,8 +170,12 @@ class AnthropicProvider:
         ]
         extra: dict[str, Any] = {}
         if thinking_budget_tokens is not None:
+            # `adaptive` lets the model decide how much of the budget to
+            # actually use per-turn, which Anthropic reports as higher
+            # quality than the fixed `enabled` shape (deprecated as of
+            # late 2025). `budget_tokens` still caps the upper bound.
             extra["thinking"] = {
-                "type": "enabled",
+                "type": "adaptive",
                 "budget_tokens": thinking_budget_tokens,
             }
         # Always stream: the Anthropic SDK refuses non-streaming calls whose
