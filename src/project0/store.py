@@ -11,13 +11,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from project0.envelope import Envelope
+
+log = logging.getLogger(__name__)
 
 
 def _utc_now_iso() -> str:
@@ -597,3 +602,78 @@ class UserFactsWriter:
             (fact_id,),
         )
         self._conn.commit()
+
+
+@dataclass
+class UserProfile:
+    address_as: str | None = None
+    birthday: str | None = None
+    fixed_preferences: list[str] = field(default_factory=list)
+    out_of_band_notes: str | None = None
+
+    @classmethod
+    def load(cls, path: Path) -> "UserProfile":
+        if not path.exists():
+            log.warning("user_profile.yaml not found at %s; using empty profile", path)
+            return cls()
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError as e:
+            raise RuntimeError(f"malformed user_profile.yaml at {path}: {e}") from e
+        if not isinstance(data, dict):
+            raise RuntimeError(f"user_profile.yaml at {path} must be a mapping")
+
+        KNOWN = {"address_as", "birthday", "fixed_preferences", "out_of_band_notes"}
+        for k in data.keys():
+            if k not in KNOWN:
+                log.warning("user_profile.yaml: ignoring unknown key %r", k)
+
+        address_as = data.get("address_as")
+        if address_as is not None and not isinstance(address_as, str):
+            raise RuntimeError("user_profile.yaml: address_as must be a string")
+
+        birthday = data.get("birthday")
+        if birthday is not None:
+            if not isinstance(birthday, str):
+                raise RuntimeError("user_profile.yaml: birthday must be a string")
+            try:
+                datetime.strptime(birthday, "%Y-%m-%d")
+            except ValueError as e:
+                raise RuntimeError(
+                    f"user_profile.yaml: birthday must be YYYY-MM-DD, got {birthday!r}"
+                ) from e
+
+        prefs = data.get("fixed_preferences") or []
+        if not isinstance(prefs, list):
+            raise RuntimeError("user_profile.yaml: fixed_preferences must be a list")
+        if not all(isinstance(p, str) for p in prefs):
+            raise RuntimeError("user_profile.yaml: fixed_preferences entries must be strings")
+
+        notes = data.get("out_of_band_notes")
+        if notes is not None and not isinstance(notes, str):
+            raise RuntimeError("user_profile.yaml: out_of_band_notes must be a string")
+
+        return cls(
+            address_as=address_as,
+            birthday=birthday,
+            fixed_preferences=list(prefs),
+            out_of_band_notes=notes,
+        )
+
+    def as_prompt_block(self) -> str:
+        if not any(
+            [self.address_as, self.birthday, self.fixed_preferences, self.out_of_band_notes]
+        ):
+            return ""
+        lines: list[str] = ["关于用户（静态资料，由用户手动维护）："]
+        if self.address_as:
+            lines.append(f"- 默认称呼: {self.address_as}")
+        if self.birthday:
+            lines.append(f"- 生日: {self.birthday}")
+        if self.fixed_preferences:
+            lines.append("- 固定偏好:")
+            for p in self.fixed_preferences:
+                lines.append(f"  · {p}")
+        if self.out_of_band_notes:
+            lines.append(f"- 备注: {self.out_of_band_notes.strip()}")
+        return "\n".join(lines)

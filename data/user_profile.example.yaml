@@ -1,0 +1,25 @@
+# MAAS user profile — static, hand-edited, read-only to agents.
+#
+# Copy this to `user_profile.yaml` and fill in real values. The real file is
+# gitignored. Edits require a MAAS restart (no hot reload).
+#
+# All fields are optional.
+
+# Fallback form of address used only by new agents that don't have one baked
+# into their own persona. Each existing agent (Manager 林夕, Secretary 苏晚,
+# Intelligence 顾瑾) overrides this with her own form in her persona file.
+address_as: "主人"
+
+# ISO-8601 date, optional.
+birthday: "1995-03-14"
+
+# Short free-text bullets. Keep to ≤5. Things you want every agent to always
+# respect without having to re-learn them from conversation.
+fixed_preferences:
+  - "说话简洁，不要太啰嗦"
+  - "不喜欢凌晨打扰"
+
+# One short paragraph of standing context — the kind of thing you might tell
+# a new coworker in the first five minutes.
+out_of_band_notes: |
+  我在做 MAAS 这个多 agent 系统项目。

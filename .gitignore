@@ -2,7 +2,9 @@
 .env
 
 # Data
-data/
+data/*
+!data/user_profile.example.yaml
+data/user_profile.yaml
 *.db
 *.db-journal
 *.db-wal
