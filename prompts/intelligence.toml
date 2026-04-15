@@ -4,8 +4,9 @@
 [llm.summarizer]
 # Opus is used for the one-shot deterministic daily report synthesis.
 # Quality-sensitive clustering + importance ranking; single call per report.
-model      = "claude-opus-4-6"
-max_tokens = 16384
+model = "claude-opus-4-6"
+max_tokens = 32768
+thinking_budget_tokens = 16384
 
 [llm.qa]
 # Sonnet drives the agentic Q&A tool-use loop. Cheaper per-call; the model
@@ -126,3 +127,11 @@ notes  = "Simon Willison"
 handle = "latentspacepod"
 tags   = ["podcast", "commentary"]
 notes  = "Latent Space podcast"
+
+[web]
+public_base_url = "http://localhost:8080"
+bind_host = "0.0.0.0"
+bind_port = 8080
+reports_dir = "data/intelligence/reports"
+feedback_dir = "data/intelligence/feedback"
+user_tz = "Asia/Shanghai"
