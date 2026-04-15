@@ -29,7 +29,7 @@ from project0.agents.intelligence import (
 from project0.agents.manager import Manager, ManagerConfig, ManagerPersona
 from project0.agents.secretary import Secretary, SecretaryConfig, SecretaryPersona
 from project0.intelligence.fake_source import FakeTwitterSource
-from project0.llm.provider import FakeProvider, SystemBlocks, _render_system_param
+from project0.llm.provider import FakeProvider, _render_system_param
 from project0.store import (
     AgentMemory,
     LLMUsageStore,
@@ -39,7 +39,6 @@ from project0.store import (
     UserFactsWriter,
     UserProfile,
 )
-
 
 VOLATILE_MARKERS = ["@secretary", "明天", "transcript"]
 

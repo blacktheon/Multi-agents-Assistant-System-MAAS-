@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -38,7 +38,7 @@ class _FakeStreamCtx:
     def __init__(self, final: MagicMock) -> None:
         self._final = final
 
-    async def __aenter__(self) -> "_FakeStreamCtx":
+    async def __aenter__(self) -> _FakeStreamCtx:
         return self
 
     async def __aexit__(self, *a) -> None:

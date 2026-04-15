@@ -44,7 +44,11 @@ def _fake_response_text():
 
 @pytest.mark.asyncio
 async def test_anthropic_translates_messages_and_tools():
-    provider = AnthropicProvider(api_key="sk-test", model="claude-sonnet-4-6", usage_store=_usage_store())
+    provider = AnthropicProvider(
+        api_key="sk-test",
+        model="claude-sonnet-4-6",
+        usage_store=_usage_store(),
+    )
     mock_create = AsyncMock(return_value=_fake_response_tool_use())
     provider._client.messages.create = mock_create  # type: ignore[method-assign]
 
@@ -102,7 +106,11 @@ async def test_anthropic_translates_messages_and_tools():
 
 @pytest.mark.asyncio
 async def test_anthropic_returns_text_variant_on_end_turn():
-    provider = AnthropicProvider(api_key="sk-test", model="claude-sonnet-4-6", usage_store=_usage_store())
+    provider = AnthropicProvider(
+        api_key="sk-test",
+        model="claude-sonnet-4-6",
+        usage_store=_usage_store(),
+    )
     provider._client.messages.create = AsyncMock(return_value=_fake_response_text())  # type: ignore[method-assign]
 
     result = await provider.complete_with_tools(
@@ -116,7 +124,11 @@ async def test_anthropic_returns_text_variant_on_end_turn():
 
 @pytest.mark.asyncio
 async def test_anthropic_wraps_sdk_errors():
-    provider = AnthropicProvider(api_key="sk-test", model="claude-sonnet-4-6", usage_store=_usage_store())
+    provider = AnthropicProvider(
+        api_key="sk-test",
+        model="claude-sonnet-4-6",
+        usage_store=_usage_store(),
+    )
     provider._client.messages.create = AsyncMock(  # type: ignore[method-assign]
         side_effect=RuntimeError("boom")
     )

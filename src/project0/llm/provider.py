@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from anthropic import AsyncAnthropic
 from anthropic.types import MessageParam
@@ -61,7 +61,7 @@ class SystemBlocks:
 
 
 def _render_system_param(
-    system: "str | SystemBlocks",
+    system: str | SystemBlocks,
     *,
     cache_ttl: str = "ephemeral",
 ) -> list[dict[str, Any]]:
@@ -92,7 +92,7 @@ class LLMProvider(Protocol):
     async def complete(
         self,
         *,
-        system: "str | SystemBlocks",
+        system: str | SystemBlocks,
         messages: list[Msg],
         max_tokens: int = 800,
         thinking_budget_tokens: int | None = None,
@@ -105,7 +105,7 @@ class LLMProvider(Protocol):
     async def complete_with_tools(
         self,
         *,
-        system: "str | SystemBlocks",
+        system: str | SystemBlocks,
         messages: list[Msg | AssistantToolUseMsg | ToolResultMsg],
         tools: list[ToolSpec],
         max_tokens: int = 1024,
@@ -127,7 +127,7 @@ class FakeProvider:
     callable_: Callable[[str, list[Msg]], str] | None = None
     calls: list[ProviderCall] = field(default_factory=list)
     tool_responses: list[ToolUseResult] | None = None
-    tool_calls_log: list[dict] = field(default_factory=list)
+    tool_calls_log: list[dict[str, Any]] = field(default_factory=list)
     usage_store: LLMUsageStore | None = None
     fake_usage: tuple[int, int, int, int] = (100, 0, 80, 20)
     _idx: int = 0
@@ -136,7 +136,7 @@ class FakeProvider:
     async def complete(
         self,
         *,
-        system: "str | SystemBlocks",
+        system: str | SystemBlocks,
         messages: list[Msg],
         max_tokens: int = 800,
         thinking_budget_tokens: int | None = None,
@@ -181,7 +181,7 @@ class FakeProvider:
     async def complete_with_tools(
         self,
         *,
-        system: "str | SystemBlocks",
+        system: str | SystemBlocks,
         messages: list[Msg | AssistantToolUseMsg | ToolResultMsg],
         tools: list[ToolSpec],
         max_tokens: int = 1024,
@@ -244,7 +244,7 @@ class AnthropicProvider:
     async def complete(
         self,
         *,
-        system: "str | SystemBlocks",
+        system: str | SystemBlocks,
         messages: list[Msg],
         max_tokens: int = 800,
         thinking_budget_tokens: int | None = None,
@@ -276,8 +276,8 @@ class AnthropicProvider:
             async with self._client.messages.stream(
                 model=self._model,
                 max_tokens=max_tokens,
-                system=system_block,
-                messages=sdk_messages,
+                system=cast(Any, system_block),
+                messages=cast(Any, sdk_messages),
                 **extra,
             ) as stream:
                 final_message = await stream.get_final_message()
@@ -318,7 +318,7 @@ class AnthropicProvider:
     async def complete_with_tools(
         self,
         *,
-        system: "str | SystemBlocks",
+        system: str | SystemBlocks,
         messages: list[Msg | AssistantToolUseMsg | ToolResultMsg],
         tools: list[ToolSpec],
         max_tokens: int = 1024,
@@ -369,9 +369,9 @@ class AnthropicProvider:
             resp = await self._client.messages.create(
                 model=self._model,
                 max_tokens=max_tokens,
-                system=system_block,
-                messages=sdk_messages,
-                tools=sdk_tools,
+                system=cast(Any, system_block),
+                messages=cast(Any, sdk_messages),
+                tools=cast(Any, sdk_tools),
             )
         except Exception as e:
             log.exception("anthropic tool-use call failed")
@@ -408,11 +408,12 @@ class AnthropicProvider:
                 if text_preamble is None:
                     text_preamble = getattr(block, "text", None)
             elif btype == "tool_use":
+                tu = cast(Any, block)
                 tool_calls.append(
                     ToolCall(
-                        id=getattr(block, "id"),
-                        name=getattr(block, "name"),
-                        input=dict(getattr(block, "input", {}) or {}),
+                        id=tu.id,
+                        name=tu.name,
+                        input=dict(getattr(tu, "input", {}) or {}),
                     )
                 )
 

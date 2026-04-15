@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 from project0.envelope import Envelope
 
@@ -612,7 +612,7 @@ class UserProfile:
     out_of_band_notes: str | None = None
 
     @classmethod
-    def load(cls, path: Path) -> "UserProfile":
+    def load(cls, path: Path) -> UserProfile:
         if not path.exists():
             log.warning("user_profile.yaml not found at %s; using empty profile", path)
             return cls()
@@ -624,7 +624,7 @@ class UserProfile:
             raise RuntimeError(f"user_profile.yaml at {path} must be a mapping")
 
         KNOWN = {"address_as", "birthday", "fixed_preferences", "out_of_band_notes"}
-        for k in data.keys():
+        for k in data:
             if k not in KNOWN:
                 log.warning("user_profile.yaml: ignoring unknown key %r", k)
 

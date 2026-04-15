@@ -12,7 +12,6 @@ import sqlite3
 
 from project0.store import Store
 
-
 # PRAGMA table_info rows → (name, type, notnull, pk) for each column,
 # ordered by column index (cid).
 EXPECTED_SCHEMA: dict[str, list[tuple[str, str, int, int]]] = {

@@ -25,17 +25,28 @@ def _usage_store() -> LLMUsageStore:
 @pytest.mark.asyncio
 async def test_fake_provider_returns_canned_responses_in_order() -> None:
     p = FakeProvider(responses=["first", "second", "third"])
-    assert await p.complete(system="sys", messages=[Msg(role="user", content="a")], agent="secretary", purpose="reply", envelope_id=None) == "first"
-    assert await p.complete(system="sys", messages=[Msg(role="user", content="b")], agent="secretary", purpose="reply", envelope_id=None) == "second"
-    assert await p.complete(system="sys", messages=[Msg(role="user", content="c")], agent="secretary", purpose="reply", envelope_id=None) == "third"
+    kwargs = {"agent": "secretary", "purpose": "reply", "envelope_id": None}
+    assert (
+        await p.complete(system="sys", messages=[Msg(role="user", content="a")], **kwargs)
+        == "first"
+    )
+    assert (
+        await p.complete(system="sys", messages=[Msg(role="user", content="b")], **kwargs)
+        == "second"
+    )
+    assert (
+        await p.complete(system="sys", messages=[Msg(role="user", content="c")], **kwargs)
+        == "third"
+    )
 
 
 @pytest.mark.asyncio
 async def test_fake_provider_raises_when_out_of_canned_responses() -> None:
     p = FakeProvider(responses=["only"])
-    await p.complete(system="sys", messages=[], agent="secretary", purpose="reply", envelope_id=None)
+    kwargs = {"agent": "secretary", "purpose": "reply", "envelope_id": None}
+    await p.complete(system="sys", messages=[], **kwargs)
     with pytest.raises(LLMProviderError):
-        await p.complete(system="sys", messages=[], agent="secretary", purpose="reply", envelope_id=None)
+        await p.complete(system="sys", messages=[], **kwargs)
 
 
 @pytest.mark.asyncio
@@ -60,8 +71,16 @@ async def test_fake_provider_callable_mode_receives_inputs() -> None:
 @pytest.mark.asyncio
 async def test_fake_provider_records_all_calls() -> None:
     p = FakeProvider(responses=["a", "b"])
-    await p.complete(system="S1", messages=[Msg(role="user", content="x")], agent="secretary", purpose="reply", envelope_id=None)
-    await p.complete(system="S2", messages=[Msg(role="user", content="y")], max_tokens=100, agent="secretary", purpose="reply", envelope_id=None)
+    kwargs = {"agent": "secretary", "purpose": "reply", "envelope_id": None}
+    await p.complete(
+        system="S1", messages=[Msg(role="user", content="x")], **kwargs
+    )
+    await p.complete(
+        system="S2",
+        messages=[Msg(role="user", content="y")],
+        max_tokens=100,
+        **kwargs,
+    )
     assert len(p.calls) == 2
     assert p.calls[0].system == "S1"
     assert p.calls[0].max_tokens == 800  # default
@@ -96,7 +115,11 @@ async def test_anthropic_provider_passes_prompt_cache_control() -> None:
         mock_client.messages.stream = MagicMock(return_value=ctx)
         mock_cls.return_value = mock_client
 
-        p = AnthropicProvider(api_key="sk-test", model="claude-sonnet-4-6", usage_store=_usage_store())
+        p = AnthropicProvider(
+            api_key="sk-test",
+            model="claude-sonnet-4-6",
+            usage_store=_usage_store(),
+        )
         out = await p.complete(
             system="PERSONA",
             messages=[Msg(role="user", content="hello")],
@@ -129,9 +152,19 @@ async def test_anthropic_provider_raises_on_sdk_error() -> None:
         )
         mock_cls.return_value = mock_client
 
-        p = AnthropicProvider(api_key="sk-test", model="claude-sonnet-4-6", usage_store=_usage_store())
+        p = AnthropicProvider(
+            api_key="sk-test",
+            model="claude-sonnet-4-6",
+            usage_store=_usage_store(),
+        )
         with pytest.raises(LLMProviderError, match="APIConnectionError"):
-            await p.complete(system="S", messages=[Msg(role="user", content="x")], agent="secretary", purpose="reply", envelope_id=None)
+            await p.complete(
+                system="S",
+                messages=[Msg(role="user", content="x")],
+                agent="secretary",
+                purpose="reply",
+                envelope_id=None,
+            )
 
 
 @pytest.mark.asyncio
@@ -146,6 +179,16 @@ async def test_anthropic_provider_returns_empty_when_no_text_blocks() -> None:
         mock_client = MagicMock()
         mock_client.messages.stream = MagicMock(return_value=ctx)
         mock_cls.return_value = mock_client
-        p = AnthropicProvider(api_key="sk-test", model="claude-sonnet-4-6", usage_store=_usage_store())
+        p = AnthropicProvider(
+            api_key="sk-test",
+            model="claude-sonnet-4-6",
+            usage_store=_usage_store(),
+        )
         with pytest.raises(LLMProviderError):
-            await p.complete(system="S", messages=[Msg(role="user", content="x")], agent="secretary", purpose="reply", envelope_id=None)
+            await p.complete(
+                system="S",
+                messages=[Msg(role="user", content="x")],
+                agent="secretary",
+                purpose="reply",
+                envelope_id=None,
+            )
