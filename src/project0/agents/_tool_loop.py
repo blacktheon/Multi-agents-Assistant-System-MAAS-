@@ -71,8 +71,8 @@ async def run_agentic_loop(
     dispatch_tool: DispatchTool,
     max_iterations: int,
     max_tokens: int,
-    agent: str = "unknown",
-    purpose: str = "tool_loop",
+    agent: str,
+    purpose: str,
     envelope_id: int | None = None,
 ) -> LoopResult:
     turn_state = TurnState()

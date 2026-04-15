@@ -507,6 +507,7 @@ class Intelligence:
             current_user_message=env.body,
         )
         return await self._run_loop(
+            env=env,
             system=system,
             initial_user_text=initial_user_text,
         )
@@ -528,6 +529,7 @@ class Intelligence:
             query=query,
         )
         return await self._run_loop(
+            env=env,
             system=system,
             initial_user_text=initial_user_text,
         )
@@ -535,6 +537,7 @@ class Intelligence:
     async def _run_loop(
         self,
         *,
+        env: Envelope,
         system: str,
         initial_user_text: str,
     ) -> AgentResult | None:
@@ -548,6 +551,9 @@ class Intelligence:
             dispatch_tool=self._dispatch_tool,
             max_iterations=self._config.max_tool_iterations,
             max_tokens=self._config.qa_max_tokens,
+            agent="intelligence",
+            purpose="qa",
+            envelope_id=env.id,
         )
         if loop.errored:
             return None

@@ -35,6 +35,8 @@ async def test_plain_text_response_returns_loop_result():
         dispatch_tool=_dispatch_echo,
         max_iterations=4,
         max_tokens=256,
+        agent="manager",
+        purpose="tool_loop",
     )
     assert isinstance(result, LoopResult)
     assert result.final_text == "hello world"
@@ -60,6 +62,8 @@ async def test_tool_use_then_text_runs_dispatch_then_returns_text():
         dispatch_tool=_dispatch_echo,
         max_iterations=4,
         max_tokens=256,
+        agent="manager",
+        purpose="tool_loop",
     )
     assert result.final_text == "ping done"
     assert result.errored is False
@@ -77,6 +81,8 @@ async def test_llm_error_is_caught_and_flagged():
         dispatch_tool=_dispatch_echo,
         max_iterations=4,
         max_tokens=256,
+        agent="manager",
+        purpose="tool_loop",
     )
     assert result.errored is True
     assert result.final_text is None
@@ -103,6 +109,8 @@ async def test_iteration_overflow_raises():
             dispatch_tool=_dispatch_echo,
             max_iterations=3,
             max_tokens=256,
+            agent="manager",
+            purpose="tool_loop",
         )
 
 
@@ -130,6 +138,8 @@ async def test_dispatch_tool_sees_turn_state_and_mutation_persists():
         dispatch_tool=dispatch_set_delegation,
         max_iterations=4,
         max_tokens=256,
+        agent="manager",
+        purpose="tool_loop",
     )
     assert result.turn_state.delegation_target == "secretary"
     assert result.turn_state.delegation_handoff == "please remind X"

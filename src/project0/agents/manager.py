@@ -484,6 +484,7 @@ class Manager:
             if transcript else f"{preamble}\n\n最新用户消息: {env.body}"
         )
         return await self._agentic_loop(
+            env=env,
             system=system,
             initial_user_text=initial_user_text,
             max_tokens=self._config.max_tokens_reply,
@@ -504,6 +505,7 @@ class Manager:
         if transcript:
             initial_user_text += f"\n\n最近对话:\n{transcript}"
         return await self._agentic_loop(
+            env=env,
             system=system,
             initial_user_text=initial_user_text,
             max_tokens=self._config.max_tokens_reply,
@@ -513,6 +515,7 @@ class Manager:
     async def _agentic_loop(
         self,
         *,
+        env: Envelope,
         system: str,
         initial_user_text: str,
         max_tokens: int,
@@ -527,6 +530,9 @@ class Manager:
             dispatch_tool=self._dispatch_tool,
             max_iterations=self._config.max_tool_iterations,
             max_tokens=max_tokens,
+            agent="manager",
+            purpose="tool_loop",
+            envelope_id=env.id,
         )
         if loop.errored:
             return None
