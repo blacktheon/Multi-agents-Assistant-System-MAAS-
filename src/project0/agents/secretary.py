@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from project0.envelope import AgentResult, Envelope
-from project0.llm.provider import LLMProvider, LLMProviderError, Msg
+from project0.llm.provider import LLMProvider, LLMProviderError, Msg, SystemBlocks
 from project0.store import (
     AgentMemory,
     MessagesStore,
@@ -238,6 +238,33 @@ class Secretary:
         log.debug("secretary: ignoring routing_reason=%s", reason)
         return None
 
+    def _assemble_system_blocks(self, *, mode: str) -> SystemBlocks:
+        """Build a two-segment system prompt. Segment 1 (stable) contains
+        persona + mode + profile. Segment 2 (facts) contains the user_facts
+        prompt block. A Secretary fact write busts only Segment 2 on the
+        next call; Segment 1 stays warm."""
+        mode_section = {
+            "listener": self._persona.listener_mode,
+            "addressed": self._persona.group_addressed_mode,
+            "dm": self._persona.dm_mode,
+            "reminder": self._persona.reminder_mode,
+        }[mode]
+
+        stable_parts = [self._persona.core, "", mode_section]
+        if self._user_profile is not None:
+            block = self._user_profile.as_prompt_block()
+            if block:
+                stable_parts.append("")
+                stable_parts.append(block)
+        stable = "\n".join(stable_parts)
+
+        facts: str | None = None
+        if self._user_facts_reader is not None:
+            facts_block = self._user_facts_reader.as_prompt_block()
+            facts = facts_block if facts_block else None
+
+        return SystemBlocks(stable=stable, facts=facts)
+
     def _cooldown_key(self, base: str, chat_id: int) -> str:
         return f"{base}_{chat_id}"
 
@@ -342,7 +369,7 @@ class Secretary:
         chat_id = env.telegram_chat_id
         assert chat_id is not None
         transcript = self._load_transcript(chat_id)
-        system = self._persona.core + "\n\n" + self._persona.listener_mode
+        system = self._assemble_system_blocks(mode="listener")
         user_msg = f"对话记录(最后一条是用户刚发的):\n{transcript}"
         try:
             reply = await self._llm.complete(
@@ -369,7 +396,6 @@ class Secretary:
         Uses the group_addressed_mode persona section."""
         return await self._addressed_llm_call(
             env=env,
-            mode_section=self._persona.group_addressed_mode,
             max_tokens=self._config.max_tokens_reply,
             preface="对话记录(你刚被点名):",
         )
@@ -378,7 +404,6 @@ class Secretary:
         """DM path. Always replies, separate cooldown namespace (per chat_id)."""
         return await self._addressed_llm_call(
             env=env,
-            mode_section=self._persona.dm_mode,
             max_tokens=self._config.max_tokens_reply,
             preface="私聊记录:",
         )
@@ -387,7 +412,6 @@ class Secretary:
         self,
         *,
         env: Envelope,
-        mode_section: str,
         max_tokens: int,
         preface: str,
     ) -> AgentResult | None:
@@ -402,7 +426,9 @@ class Secretary:
             transcript = self._load_dm_transcript(chat_id)
         else:
             transcript = self._load_transcript(chat_id)
-        system = self._persona.core + "\n\n" + mode_section
+        system = self._assemble_system_blocks(
+            mode="dm" if env.source == "telegram_dm" else "addressed",
+        )
         # Scene context so the model doesn't guess group vs DM. Secretary's
         # tone shifts between the two (flirtier in DM, more reserved in a
         # group with other agents listening), so getting this wrong is a
@@ -441,7 +467,7 @@ class Secretary:
         when = (payload.get("when") or "").strip()
         note = (payload.get("note") or "").strip()
 
-        system = self._persona.core + "\n\n" + self._persona.reminder_mode
+        system = self._assemble_system_blocks(mode="reminder")
         if env.source == "telegram_group" or env.telegram_chat_id is not None:
             scene_line = "当前场景：Telegram 群聊（可能有其他人或其他 agent 看得见你说的话）"
         else:
