@@ -129,7 +129,7 @@ tags   = ["podcast", "commentary"]
 notes  = "Latent Space podcast"
 
 [web]
-public_base_url = "http://localhost:8080"
+public_base_url = "http://edgexpert-b33a.tail10d8e3.ts.net:8080"
 bind_host = "0.0.0.0"
 bind_port = 8080
 reports_dir = "data/intelligence/reports"

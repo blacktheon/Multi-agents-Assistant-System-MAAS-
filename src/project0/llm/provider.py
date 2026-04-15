@@ -174,19 +174,26 @@ class AnthropicProvider:
                 "type": "enabled",
                 "budget_tokens": thinking_budget_tokens,
             }
+        # Always stream: the Anthropic SDK refuses non-streaming calls whose
+        # max_tokens + thinking_budget could exceed the 10-minute request
+        # limit (e.g. Opus + 32k tokens + 16k thinking). Streaming sidesteps
+        # that check and works identically for small requests too — we just
+        # accumulate the final message and return its text. Callers see the
+        # same `str` return as before.
         try:
-            resp = await self._client.messages.create(
+            async with self._client.messages.stream(
                 model=self._model,
                 max_tokens=max_tokens,
                 system=system_block,
                 messages=sdk_messages,
                 **extra,
-            )
+            ) as stream:
+                final_message = await stream.get_final_message()
         except Exception as e:
             log.exception("anthropic call failed")
             raise LLMProviderError(f"anthropic {type(e).__name__}") from e
 
-        for block in resp.content:
+        for block in final_message.content:
             if getattr(block, "type", None) == "text":
                 text = getattr(block, "text", None)
                 if text:
