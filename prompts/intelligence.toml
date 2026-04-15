@@ -4,8 +4,9 @@
 [llm.summarizer]
 # Opus is used for the one-shot deterministic daily report synthesis.
 # Quality-sensitive clustering + importance ranking; single call per report.
-model      = "claude-opus-4-6"
-max_tokens = 16384
+model = "claude-opus-4-6"
+max_tokens = 32768
+thinking_budget_tokens = 16384
 
 [llm.qa]
 # Sonnet drives the agentic Q&A tool-use loop. Cheaper per-call; the model
@@ -20,6 +21,12 @@ max_tool_iterations = 6
 [twitter]
 timeline_since_hours  = 24
 max_tweets_per_handle = 50
+
+[pulse]
+# Auto-generate the daily report at this local-time hour (0-23) if one
+# doesn't already exist for today. Set to disable by commenting out.
+# Runs in user_tz (configured in .env as USER_TIMEZONE).
+daily_hour = 10
 
 # --- Seed watchlist (hand-curated for 6d) -----------------------------------
 #
@@ -126,3 +133,11 @@ notes  = "Simon Willison"
 handle = "latentspacepod"
 tags   = ["podcast", "commentary"]
 notes  = "Latent Space podcast"
+
+[web]
+public_base_url = "http://edgexpert-b33a.tail10d8e3.ts.net:8080"
+bind_host = "0.0.0.0"
+bind_port = 8080
+reports_dir = "data/intelligence/reports"
+feedback_dir = "data/intelligence/feedback"
+user_tz = "Asia/Shanghai"

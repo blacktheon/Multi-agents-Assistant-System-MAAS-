@@ -43,6 +43,7 @@ class ProviderCall:
     system: str
     messages: list[Msg]
     max_tokens: int
+    thinking_budget_tokens: int | None = None
 
 
 class LLMProvider(Protocol):
@@ -52,6 +53,7 @@ class LLMProvider(Protocol):
         system: str,
         messages: list[Msg],
         max_tokens: int = 800,
+        thinking_budget_tokens: int | None = None,
     ) -> str:
         ...
 
@@ -85,9 +87,15 @@ class FakeProvider:
         system: str,
         messages: list[Msg],
         max_tokens: int = 800,
+        thinking_budget_tokens: int | None = None,
     ) -> str:
         self.calls.append(
-            ProviderCall(system=system, messages=list(messages), max_tokens=max_tokens)
+            ProviderCall(
+                system=system,
+                messages=list(messages),
+                max_tokens=max_tokens,
+                thinking_budget_tokens=thinking_budget_tokens,
+            )
         )
         if self.callable_ is not None:
             return self.callable_(system, messages)
@@ -148,6 +156,7 @@ class AnthropicProvider:
         system: str,
         messages: list[Msg],
         max_tokens: int = 800,
+        thinking_budget_tokens: int | None = None,
     ) -> str:
         sdk_messages: list[MessageParam] = [
             {"role": m.role, "content": m.content} for m in messages
@@ -159,18 +168,36 @@ class AnthropicProvider:
                 "cache_control": {"type": "ephemeral"},
             }
         ]
+        extra: dict[str, Any] = {}
+        if thinking_budget_tokens is not None:
+            # `adaptive` lets the model decide how much of the budget to
+            # actually use per-turn, which Anthropic reports as higher
+            # quality than the fixed `enabled` shape (deprecated as of
+            # late 2025). `budget_tokens` still caps the upper bound.
+            extra["thinking"] = {
+                "type": "adaptive",
+                "budget_tokens": thinking_budget_tokens,
+            }
+        # Always stream: the Anthropic SDK refuses non-streaming calls whose
+        # max_tokens + thinking_budget could exceed the 10-minute request
+        # limit (e.g. Opus + 32k tokens + 16k thinking). Streaming sidesteps
+        # that check and works identically for small requests too — we just
+        # accumulate the final message and return its text. Callers see the
+        # same `str` return as before.
         try:
-            resp = await self._client.messages.create(
+            async with self._client.messages.stream(
                 model=self._model,
                 max_tokens=max_tokens,
                 system=system_block,
                 messages=sdk_messages,
-            )
+                **extra,
+            ) as stream:
+                final_message = await stream.get_final_message()
         except Exception as e:
             log.exception("anthropic call failed")
             raise LLMProviderError(f"anthropic {type(e).__name__}") from e
 
-        for block in resp.content:
+        for block in final_message.content:
             if getattr(block, "type", None) == "text":
                 text = getattr(block, "text", None)
                 if text:

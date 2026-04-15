@@ -61,3 +61,65 @@ model = "claude-opus-4-6"
 """)
     with pytest.raises(RuntimeError, match="max_tokens"):
         load_intelligence_config(p)
+
+
+def test_thinking_budget_optional_defaults_none(tmp_path: Path):
+    """6e: thinking_budget_tokens is optional; missing key → None."""
+    p = _write(tmp_path, VALID_TOML)
+    cfg = load_intelligence_config(p)
+    assert cfg.summarizer_thinking_budget is None
+
+
+def test_daily_pulse_hour_optional_defaults_none(tmp_path: Path):
+    """6e: daily_pulse_hour is optional; missing [pulse] section → None."""
+    p = _write(tmp_path, VALID_TOML)
+    cfg = load_intelligence_config(p)
+    assert cfg.daily_pulse_hour is None
+
+
+def test_daily_pulse_hour_loaded_when_present(tmp_path: Path):
+    """6e: when [pulse].daily_hour is set, it loads."""
+    toml_with_pulse = VALID_TOML + """
+[pulse]
+daily_hour = 10
+"""
+    p = _write(tmp_path, toml_with_pulse)
+    cfg = load_intelligence_config(p)
+    assert cfg.daily_pulse_hour == 10
+
+
+def test_daily_pulse_hour_out_of_range_raises(tmp_path: Path):
+    """6e: daily_hour must be 0-23."""
+    toml_bad = VALID_TOML + """
+[pulse]
+daily_hour = 25
+"""
+    p = _write(tmp_path, toml_bad)
+    with pytest.raises(RuntimeError, match="daily_hour"):
+        load_intelligence_config(p)
+
+
+def test_thinking_budget_loaded_when_present(tmp_path: Path):
+    """6e: when [llm.summarizer].thinking_budget_tokens is set, it loads."""
+    toml_with_budget = """
+[llm.summarizer]
+model = "claude-opus-4-6"
+max_tokens = 32768
+thinking_budget_tokens = 16384
+
+[llm.qa]
+model = "claude-sonnet-4-6"
+max_tokens = 2048
+
+[context]
+transcript_window = 10
+max_tool_iterations = 6
+
+[twitter]
+timeline_since_hours = 24
+max_tweets_per_handle = 50
+"""
+    p = _write(tmp_path, toml_with_budget)
+    cfg = load_intelligence_config(p)
+    assert cfg.summarizer_thinking_budget == 16384
+    assert cfg.summarizer_max_tokens == 32768

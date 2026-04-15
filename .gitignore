@@ -36,3 +36,6 @@ tests/fixtures/google_calendar/*.local.json
 
 # Intelligence agent runtime data (6d)
 data/intelligence/reports/
+
+# Intelligence webapp feedback log (6e)
+data/intelligence/feedback/

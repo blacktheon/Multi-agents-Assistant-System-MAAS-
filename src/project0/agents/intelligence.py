@@ -123,12 +123,14 @@ def load_intelligence_persona(path: Path) -> IntelligencePersona:
 class IntelligenceConfig:
     summarizer_model: str
     summarizer_max_tokens: int
+    summarizer_thinking_budget: int | None
     qa_model: str
     qa_max_tokens: int
     transcript_window: int
     max_tool_iterations: int
     timeline_since_hours: int
     max_tweets_per_handle: int
+    daily_pulse_hour: int | None = None
 
 
 def load_intelligence_config(path: Path) -> IntelligenceConfig:
@@ -151,15 +153,32 @@ def load_intelligence_config(path: Path) -> IntelligenceConfig:
             )
         return node[key]
 
+    summarizer_section = data.get("llm", {}).get("summarizer", {})
+    thinking_budget_raw = summarizer_section.get("thinking_budget_tokens")
+
+    pulse_section = data.get("pulse", {})
+    daily_pulse_hour_raw = pulse_section.get("daily_hour")
+    daily_pulse_hour: int | None = None
+    if daily_pulse_hour_raw is not None:
+        daily_pulse_hour = int(daily_pulse_hour_raw)
+        if not (0 <= daily_pulse_hour <= 23):
+            raise RuntimeError(
+                f"[pulse].daily_hour must be 0-23 in {path}, got {daily_pulse_hour}"
+            )
+
     return IntelligenceConfig(
         summarizer_model=str(_require("llm.summarizer", "model")),
         summarizer_max_tokens=int(_require("llm.summarizer", "max_tokens")),
+        summarizer_thinking_budget=(
+            int(thinking_budget_raw) if thinking_budget_raw is not None else None
+        ),
         qa_model=str(_require("llm.qa", "model")),
         qa_max_tokens=int(_require("llm.qa", "max_tokens")),
         transcript_window=int(_require("context", "transcript_window")),
         max_tool_iterations=int(_require("context", "max_tool_iterations")),
         timeline_since_hours=int(_require("twitter", "timeline_since_hours")),
         max_tweets_per_handle=int(_require("twitter", "max_tweets_per_handle")),
+        daily_pulse_hour=daily_pulse_hour,
     )
 
 
@@ -198,6 +217,21 @@ _LIST_REPORTS_SCHEMA: dict[str, Any] = {
     "required": [],
 }
 
+_GET_REPORT_LINK_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "date": {
+            "type": "string",
+            "description": (
+                "Either a YYYY-MM-DD date string or the literal string "
+                "'latest'. If 'latest', the tool picks the newest report "
+                "that exists on disk."
+            ),
+        },
+    },
+    "required": ["date"],
+}
+
 
 # --- Intelligence class -------------------------------------------------------
 
@@ -219,6 +253,7 @@ class Intelligence:
         watchlist: list[WatchEntry],
         reports_dir: Path,
         user_tz: ZoneInfo,
+        public_base_url: str,
     ) -> None:
         self._llm_summarizer = llm_summarizer
         self._llm_qa = llm_qa
@@ -229,6 +264,7 @@ class Intelligence:
         self._watchlist = watchlist
         self._reports_dir = reports_dir
         self._user_tz = user_tz
+        self._public_base_url = public_base_url
         self._tool_specs = self._build_tool_specs()
 
     def _build_tool_specs(self) -> list[ToolSpec]:
@@ -262,6 +298,18 @@ class Intelligence:
                     "List available report dates (most recent first)."
                 ),
                 input_schema=_LIST_REPORTS_SCHEMA,
+            ),
+            ToolSpec(
+                name="get_report_link",
+                description=(
+                    "Return a stable URL to the webpage rendering of a daily "
+                    "report. Use this whenever the user asks to 'send me', "
+                    "'share', 'open', or 'give me a link to' a daily report. "
+                    "Paste the returned URL verbatim into your reply — do not "
+                    "shorten, paraphrase, or wrap it in a code block. Pass "
+                    "'latest' to get the most recent report."
+                ),
+                input_schema=_GET_REPORT_LINK_SCHEMA,
             ),
         ]
 
@@ -301,6 +349,7 @@ class Intelligence:
                 source=self._twitter,
                 llm=self._llm_summarizer,
                 summarizer_max_tokens=self._config.summarizer_max_tokens,
+                summarizer_thinking_budget=self._config.summarizer_thinking_budget,
                 watchlist=self._watchlist,
                 reports_dir=self._reports_dir,
                 user_tz=self._user_tz,
@@ -341,6 +390,33 @@ class Intelligence:
                 })
             return json.dumps(results, ensure_ascii=False), False
 
+        if name == "get_report_link":
+            raw = (inp.get("date") or "").strip()
+            if raw == "latest":
+                dates = list_report_dates(self._reports_dir)
+                if not dates:
+                    return (
+                        "No reports exist yet. Generate one first.",
+                        True,
+                    )
+                target = dates[0]
+            else:
+                try:
+                    target = date.fromisoformat(raw)
+                except ValueError:
+                    return (
+                        f"Invalid date: {raw!r}. Expected YYYY-MM-DD or 'latest'.",
+                        True,
+                    )
+                if not (self._reports_dir / f"{target.isoformat()}.json").exists():
+                    return (f"No report for {target.isoformat()}.", True)
+            base = self._public_base_url.rstrip("/")
+            url = f"{base}/reports/{target.isoformat()}"
+            return (
+                json.dumps({"url": url, "date": target.isoformat()}, ensure_ascii=False),
+                False,
+            )
+
         return f"unknown tool: {name}", True
 
     async def handle(self, env: Envelope) -> AgentResult | None:
@@ -353,6 +429,33 @@ class Intelligence:
             return await self._run_delegated_turn(env)
         log.debug("intelligence: ignoring routing_reason=%s", reason)
         return None
+
+    async def ensure_today_report(self) -> bool:
+        """Generate today's daily report if none exists on disk yet.
+
+        Used by the daily pulse task in ``main.py`` to auto-generate reports
+        at a configured hour. Returns True if a new report was written,
+        False if today's report already existed. Raises whatever
+        ``generate_daily_report`` raises (TwitterSourceError, ValueError)
+        so the caller can log and retry on the next pulse tick."""
+        today = datetime.now(tz=self._user_tz).date()
+        path = self._reports_dir / f"{today.isoformat()}.json"
+        if path.exists():
+            return False
+        log.info("daily pulse: generating report for %s", today)
+        await generate_daily_report(
+            target_date=today,
+            source=self._twitter,
+            llm=self._llm_summarizer,
+            summarizer_max_tokens=self._config.summarizer_max_tokens,
+            summarizer_thinking_budget=self._config.summarizer_thinking_budget,
+            watchlist=self._watchlist,
+            reports_dir=self._reports_dir,
+            user_tz=self._user_tz,
+            timeline_since_hours=self._config.timeline_since_hours,
+            max_tweets_per_handle=self._config.max_tweets_per_handle,
+        )
+        return True
 
     def _try_read_latest_report(self) -> dict[str, Any] | None:
         dates = list_report_dates(self._reports_dir)

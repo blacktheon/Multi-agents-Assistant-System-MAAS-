@@ -41,6 +41,7 @@ async def generate_daily_report(
     user_tz: ZoneInfo,
     timeline_since_hours: int,
     max_tweets_per_handle: int,
+    summarizer_thinking_budget: int | None = None,
 ) -> dict[str, Any]:
     """Fetch tweets from the watchlist, summarize via one LLM call,
     validate, write. Returns the written report dict.
@@ -92,6 +93,7 @@ async def generate_daily_report(
         system=SUMMARIZER_SYSTEM_PROMPT,
         messages=[Msg(role="user", content=user_prompt)],
         max_tokens=summarizer_max_tokens,
+        thinking_budget_tokens=summarizer_thinking_budget,
     )
 
     report_dict = parse_json_strict(result_text)

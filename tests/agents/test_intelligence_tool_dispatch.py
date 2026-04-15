@@ -39,6 +39,7 @@ def _config() -> IntelligenceConfig:
     return IntelligenceConfig(
         summarizer_model="claude-opus-4-6",
         summarizer_max_tokens=16384,
+        summarizer_thinking_budget=None,
         qa_model="claude-sonnet-4-6",
         qa_max_tokens=2048,
         transcript_window=10,
@@ -91,7 +92,12 @@ def _valid_report_dict(date_str: str = "2026-04-15") -> dict:
     }
 
 
-def _build_intelligence(tmp_path: Path, *, src: FakeTwitterSource | None = None) -> Intelligence:
+def _build_intelligence(
+    tmp_path: Path,
+    *,
+    src: FakeTwitterSource | None = None,
+    public_base_url: str = "http://test.local:8080",
+) -> Intelligence:
     if src is None:
         src = FakeTwitterSource(timelines={"sama": [_tweet("sama", "1", 2)]})
     llm_summarizer = FakeProvider(responses=[json.dumps(_valid_report_dict())])
@@ -106,6 +112,7 @@ def _build_intelligence(tmp_path: Path, *, src: FakeTwitterSource | None = None)
         watchlist=[WatchEntry(handle="sama", tags=(), notes="")],
         reports_dir=tmp_path,
         user_tz=ZoneInfo("Asia/Shanghai"),
+        public_base_url=public_base_url,
     )
 
 
@@ -202,3 +209,103 @@ async def test_unknown_tool_returns_error(tmp_path: Path):
     content, is_err = await intel._dispatch_tool(call, TurnState())
     assert is_err is True
     assert "unknown" in content.lower()
+
+
+# --- get_report_link (6e) ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_report_link_latest_picks_newest(tmp_path: Path):
+    for d in ["2026-04-10", "2026-04-15"]:
+        atomic_write_json(tmp_path / f"{d}.json", _valid_report_dict(d))
+    intel = _build_intelligence(tmp_path, public_base_url="http://host:8080")
+    call = ToolCall(id="t1", name="get_report_link", input={"date": "latest"})
+    content, is_err = await intel._dispatch_tool(call, TurnState())
+    assert is_err is False
+    parsed = json.loads(content)
+    assert parsed["url"] == "http://host:8080/reports/2026-04-15"
+    assert parsed["date"] == "2026-04-15"
+
+
+@pytest.mark.asyncio
+async def test_get_report_link_specific_date_exists(tmp_path: Path):
+    atomic_write_json(tmp_path / "2026-04-15.json", _valid_report_dict("2026-04-15"))
+    intel = _build_intelligence(tmp_path, public_base_url="http://host:8080")
+    call = ToolCall(id="t1", name="get_report_link", input={"date": "2026-04-15"})
+    content, is_err = await intel._dispatch_tool(call, TurnState())
+    assert is_err is False
+    parsed = json.loads(content)
+    assert parsed["url"] == "http://host:8080/reports/2026-04-15"
+
+
+@pytest.mark.asyncio
+async def test_get_report_link_nonexistent_date_returns_error(tmp_path: Path):
+    intel = _build_intelligence(tmp_path, public_base_url="http://host:8080")
+    call = ToolCall(id="t1", name="get_report_link", input={"date": "2020-01-01"})
+    content, is_err = await intel._dispatch_tool(call, TurnState())
+    assert is_err is True
+    assert "2020-01-01" in content
+
+
+@pytest.mark.asyncio
+async def test_get_report_link_invalid_date_format_returns_error(tmp_path: Path):
+    intel = _build_intelligence(tmp_path, public_base_url="http://host:8080")
+    call = ToolCall(id="t1", name="get_report_link", input={"date": "not-a-date"})
+    content, is_err = await intel._dispatch_tool(call, TurnState())
+    assert is_err is True
+    assert "not-a-date" in content or "invalid" in content.lower()
+
+
+@pytest.mark.asyncio
+async def test_get_report_link_latest_with_no_reports_returns_error(tmp_path: Path):
+    intel = _build_intelligence(tmp_path, public_base_url="http://host:8080")
+    call = ToolCall(id="t1", name="get_report_link", input={"date": "latest"})
+    content, is_err = await intel._dispatch_tool(call, TurnState())
+    assert is_err is True
+    assert "no reports" in content.lower() or "generate" in content.lower()
+
+
+# --- ensure_today_report (6e daily pulse) ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ensure_today_report_skips_when_report_exists(tmp_path: Path):
+    """If today's report file is already on disk, the pulse must skip
+    generation and return False — we don't want a pulse tick to clobber
+    a manually-generated report."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo as _ZI
+
+    today = datetime.now(tz=_ZI("Asia/Shanghai")).date()
+    atomic_write_json(tmp_path / f"{today.isoformat()}.json", _valid_report_dict(today.isoformat()))
+    intel = _build_intelligence(tmp_path)
+
+    generated = await intel.ensure_today_report()
+    assert generated is False
+
+
+@pytest.mark.asyncio
+async def test_ensure_today_report_generates_when_missing(tmp_path: Path):
+    """When no file exists for today, the pulse must call
+    generate_daily_report and return True."""
+    intel = _build_intelligence(tmp_path)
+    from datetime import datetime
+    from zoneinfo import ZoneInfo as _ZI
+
+    today = datetime.now(tz=_ZI("Asia/Shanghai")).date()
+    assert not (tmp_path / f"{today.isoformat()}.json").exists()
+
+    generated = await intel.ensure_today_report()
+    assert generated is True
+    assert (tmp_path / f"{today.isoformat()}.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_get_report_link_trims_trailing_slash_on_base_url(tmp_path: Path):
+    atomic_write_json(tmp_path / "2026-04-15.json", _valid_report_dict("2026-04-15"))
+    intel = _build_intelligence(tmp_path, public_base_url="http://host:8080/")
+    call = ToolCall(id="t1", name="get_report_link", input={"date": "2026-04-15"})
+    content, is_err = await intel._dispatch_tool(call, TurnState())
+    assert is_err is False
+    parsed = json.loads(content)
+    assert parsed["url"] == "http://host:8080/reports/2026-04-15"

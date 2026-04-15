@@ -61,19 +61,31 @@ async def test_fake_provider_records_all_calls() -> None:
     assert p.calls[1].max_tokens == 100
 
 
+def _mock_stream_ctx(*, final_content: list) -> MagicMock:
+    """Build a mock for `messages.stream(...)` returning an async context
+    manager whose `get_final_message()` returns a message with the given
+    content blocks. (6e: AnthropicProvider.complete uses streaming.)"""
+    final_message = SimpleNamespace(content=final_content)
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=ctx)
+    ctx.__aexit__ = AsyncMock(return_value=None)
+    ctx.get_final_message = AsyncMock(return_value=final_message)
+    return ctx
+
+
 @pytest.mark.asyncio
 async def test_anthropic_provider_passes_prompt_cache_control() -> None:
     """AnthropicProvider must send the system prompt as a content block
     with cache_control={'type': 'ephemeral'}, not as a plain string."""
     from project0.llm.provider import AnthropicProvider
 
-    fake_response = SimpleNamespace(
-        content=[SimpleNamespace(text="hi from fake claude", type="text")]
+    ctx = _mock_stream_ctx(
+        final_content=[SimpleNamespace(text="hi from fake claude", type="text")]
     )
 
     with patch("project0.llm.provider.AsyncAnthropic") as mock_cls:
         mock_client = MagicMock()
-        mock_client.messages.create = AsyncMock(return_value=fake_response)
+        mock_client.messages.stream = MagicMock(return_value=ctx)
         mock_cls.return_value = mock_client
 
         p = AnthropicProvider(api_key="sk-test", model="claude-sonnet-4-6")
@@ -84,8 +96,8 @@ async def test_anthropic_provider_passes_prompt_cache_control() -> None:
         )
 
     assert out == "hi from fake claude"
-    mock_client.messages.create.assert_called_once()
-    kwargs = mock_client.messages.create.call_args.kwargs
+    mock_client.messages.stream.assert_called_once()
+    kwargs = mock_client.messages.stream.call_args.kwargs
     assert kwargs["model"] == "claude-sonnet-4-6"
     assert kwargs["max_tokens"] == 500
     assert kwargs["system"] == [
@@ -102,7 +114,8 @@ async def test_anthropic_provider_raises_on_sdk_error() -> None:
 
     with patch("project0.llm.provider.AsyncAnthropic") as mock_cls:
         mock_client = MagicMock()
-        mock_client.messages.create = AsyncMock(
+        # The stream() call itself raises — simulates network-level failure.
+        mock_client.messages.stream = MagicMock(
             side_effect=anthropic.APIConnectionError(request=MagicMock())
         )
         mock_cls.return_value = mock_client
@@ -118,11 +131,11 @@ async def test_anthropic_provider_returns_empty_when_no_text_blocks() -> None:
     blocks), raise LLMProviderError rather than silently returning empty."""
     from project0.llm.provider import AnthropicProvider
 
+    ctx = _mock_stream_ctx(final_content=[])
+
     with patch("project0.llm.provider.AsyncAnthropic") as mock_cls:
         mock_client = MagicMock()
-        mock_client.messages.create = AsyncMock(
-            return_value=SimpleNamespace(content=[])
-        )
+        mock_client.messages.stream = MagicMock(return_value=ctx)
         mock_cls.return_value = mock_client
         p = AnthropicProvider(api_key="sk-test", model="claude-sonnet-4-6")
         with pytest.raises(LLMProviderError):

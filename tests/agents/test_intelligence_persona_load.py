@@ -90,3 +90,20 @@ t
     )
     with pytest.raises(ValueError, match="私聊"):
         load_intelligence_persona(p)
+
+
+def test_real_persona_mentions_get_report_link() -> None:
+    """6e: prompts/intelligence.md should carry the get_report_link rule."""
+    text = Path("prompts/intelligence.md").read_text(encoding="utf-8")
+    assert "get_report_link" in text
+
+
+def test_real_persona_mentions_source_tweet_citation_rule() -> None:
+    """6e: prompts/intelligence.md should explain the source_tweets citation rule."""
+    text = Path("prompts/intelligence.md").read_text(encoding="utf-8")
+    assert "source_tweets" in text
+
+
+def test_real_persona_still_parses_after_6e_additions() -> None:
+    """6e: adding the new persona blocks must not break the canonical parser."""
+    load_intelligence_persona(Path("prompts/intelligence.md"))

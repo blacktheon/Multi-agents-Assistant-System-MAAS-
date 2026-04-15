@@ -188,6 +188,68 @@ ls data/intelligence/reports/
 cat data/intelligence/reports/$(date +%F).json | jq '.news_items[] | {id, headline, importance}'
 ```
 
+## Intelligence webapp (6e)
+
+The Intelligence agent ships with a FastAPI webapp that renders daily
+reports in your browser. Run `uv run python -m project0.main` and the webapp
+starts alongside the Telegram bots on the port configured in
+`prompts/intelligence.toml` (default `8080`).
+
+**Access from your phone via Tailscale.** The webapp binds to `0.0.0.0:8080`
+by default. Install Tailscale on both the server machine and your phone, log
+in on both with the same account, and open
+`http://<machine>.<tailnet>.ts.net:8080/` in your phone's browser. It works
+on cellular, coffee-shop WiFi, anywhere — Tailscale handles the tunneling
+and provides the DNS name. No port forwarding, no TLS cert management, no
+auth wiring.
+
+**URLs:**
+- `/` — latest report (auto-picks newest on disk)
+- `/reports/YYYY-MM-DD` — specific report by date
+- `/history` — browsable list of all reports grouped by month
+- `/api/feedback/thumbs` — POST thumbs events
+- `/healthz` — liveness probe
+
+**顾瑾 can send you links.** In Telegram, ask "把今天的日报发给我" or
+"send me today's report" — Intelligence calls the `get_report_link` tool
+and returns a URL you can tap.
+
+**Feedback.** Each news item has thumbs up/down buttons. Clicks are recorded
+to `data/intelligence/feedback/YYYY-MM.jsonl` as an append-only event log.
+6e captures the signal only; reading it back to influence generation or
+memory is a later sub-project.
+
+**Configuration** (`[web]` section in `prompts/intelligence.toml`):
+- `public_base_url` — URL 顾瑾 uses when building report links. Must start
+  with `http://` or `https://`. **Update this to your Tailscale hostname.**
+- `bind_host` — default `0.0.0.0` (all interfaces)
+- `bind_port` — default `8080`
+- `reports_dir`, `feedback_dir` — filesystem paths
+- `user_tz` — timezone for feedback event timestamps and the report meta line
+
+`[llm.summarizer]` also gained `thinking_budget_tokens` (default `16384`)
+which enables Claude Opus extended thinking on the daily-report generation
+call. This bumps report quality at a small cost increment (~$0.24/report).
+
+**Dev workflow** — run just the webapp with live reload on port 8081 for
+template/CSS iteration (doesn't start the Telegram bots):
+
+```bash
+./scripts/dev_web.sh
+```
+
+**Smoke test** — spins up a temporary server on port 18080, exercises all
+routes against a seeded fake report, cleans up:
+
+```bash
+./scripts/smoke_web.sh
+```
+
+**Security note.** There is no auth, TLS, rate limiting, or CSRF protection.
+The security model is "Tailscale is the gate". **Do not expose port 8080 to
+the public internet.** Verify your firewall (`sudo ufw status` or equivalent)
+does not forward port 8080 from the outside.
+
 ## Tests
 
 ```bash
@@ -269,8 +331,8 @@ docs/superpowers/
 
 ## Roadmap
 
-- **6e** — Intelligence delivery surface. Email and/or webpage rendering of stored reports, browsable history UI.
-- **6f** — Deep conversational layer for Intelligence: cross-report retrieval, 7-day topic memory, follow-up web search during Q&A, extended thinking on the summarizer call.
+- **6e** — ✅ Intelligence delivery surface. FastAPI webapp rendering reports with history browsing, thumbs feedback capture, `get_report_link` agent tool, extended thinking on the Opus summarizer.
+- **6f** — Two-source generation: dedicated intel Twitter account + dynamic follows fetching + automatic discovery via Twitter search queries.
 - **6g** — Pulse integrations for Intelligence: scheduled daily reports + user-defined ad-hoc watch pulses ("check Iran news every 10 min", "new model releases every 3 days").
 - **6h** — Feedback loop + preference learning. Per-entry thumbs-up, dynamic follow/unfollow via chat, trained ranking.
 - **Supervisor agent** — audit, scoring, incident investigation (long-term).

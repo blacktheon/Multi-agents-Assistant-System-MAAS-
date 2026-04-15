@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}History · Intelligence{% endblock %}
+{% block content %}
+
+<h2>All reports</h2>
+
+{% if not dates %}
+  <p class="empty-state">No reports yet.</p>
+{% else %}
+  {% for month_label, month_dates in dates | groupby_month %}
+    <section class="history-month">
+      <h3>{{ month_label }}</h3>
+      <ul>
+        {% for d in month_dates %}
+          <li><a href="/reports/{{ d.isoformat() }}">{{ d.isoformat() }}</a></li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endfor %}
+{% endif %}
+
+{% endblock %}

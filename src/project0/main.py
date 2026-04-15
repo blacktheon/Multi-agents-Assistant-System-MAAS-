@@ -9,7 +9,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import tomllib
+from datetime import datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
+
+if TYPE_CHECKING:
+    from project0.agents.intelligence import Intelligence
 
 from project0.agents.manager import Manager, load_manager_config, load_manager_persona
 from project0.agents.registry import AGENT_SPECS, register_manager, register_secretary
@@ -17,6 +24,7 @@ from project0.agents.secretary import Secretary, load_config, load_persona
 from project0.calendar.auth import load_or_acquire_credentials
 from project0.calendar.client import GoogleCalendar
 from project0.config import Settings, load_settings
+from project0.intelligence_web.config import WebConfig
 from project0.llm.provider import AnthropicProvider, FakeProvider, LLMProvider
 from project0.orchestrator import Orchestrator
 from project0.pulse import load_pulse_entries, run_pulse_loop
@@ -35,11 +43,110 @@ def _setup_logging(level: str) -> None:
         level=getattr(logging, level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s :: %(message)s",
     )
+    # Silence chatty third-party loggers. These emit one INFO line per HTTP
+    # request, which floods the console with Telegram long-polling pings
+    # and per-tweet-fetch lines during report generation. Project code at
+    # `project0.*` still respects the user's configured level.
+    for noisy in (
+        "httpx",
+        "httpcore",
+        "urllib3",
+        "telegram",
+        "telegram.ext",
+        "apscheduler",
+        "uvicorn.access",
+    ):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
 def _ensure_store_dir(store_path: str) -> None:
     p = Path(store_path)
     p.parent.mkdir(parents=True, exist_ok=True)
+
+
+async def _run_intelligence_daily_pulse(
+    *,
+    intelligence: Intelligence,
+    user_tz: ZoneInfo,
+    pulse_hour: int,
+    stop_event: asyncio.Event,
+) -> None:
+    """Daily pulse: at ``pulse_hour`` each day, generate today's daily
+    report if it doesn't already exist. Runs as an asyncio task inside
+    ``_run``'s TaskGroup; stops when ``stop_event`` is set. Errors in a
+    single generation (e.g. twitterapi.io outage) are logged and the loop
+    continues — we retry on the next pulse."""
+    while not stop_event.is_set():
+        now = datetime.now(tz=user_tz)
+        today = now.date()
+        target = datetime(
+            today.year, today.month, today.day, pulse_hour, tzinfo=user_tz
+        )
+        if now >= target:
+            # Past today's pulse window — check and generate now if needed.
+            try:
+                generated = await intelligence.ensure_today_report()
+                if generated:
+                    log.info("daily pulse: generated report for %s", today)
+                else:
+                    log.info(
+                        "daily pulse: report for %s already exists, skipping",
+                        today,
+                    )
+            except Exception:
+                log.exception("daily pulse: generation failed for %s", today)
+            # Schedule next pulse for tomorrow at pulse_hour.
+            target = target + timedelta(days=1)
+
+        wait_seconds = max((target - now).total_seconds(), 1.0)
+        log.info(
+            "daily pulse: next check at %s (in %ds)",
+            target.strftime("%Y-%m-%d %H:%M %Z"),
+            int(wait_seconds),
+        )
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=wait_seconds)
+            return  # stop_event was set — exit loop
+        except TimeoutError:
+            continue  # time to check again
+
+
+async def _run_web(
+    *,
+    web_config: WebConfig,
+    stop_event: asyncio.Event,
+) -> None:
+    """Run the Intelligence webapp (6e) as an asyncio task alongside the bot
+    pollers. Shares ``stop_event`` with the rest of ``_run`` so ``Ctrl-C``
+    stops everything together."""
+    import uvicorn
+
+    from project0.intelligence_web.app import create_app
+
+    app = create_app(web_config)
+    config = uvicorn.Config(
+        app,
+        host=web_config.bind_host,
+        port=web_config.bind_port,
+        log_level="info",
+        access_log=True,
+        lifespan="on",
+    )
+    server = uvicorn.Server(config)
+    # main.py owns signals; prevent uvicorn from installing its own handlers.
+    # The attribute exists on uvicorn.Server at runtime but isn't in the stubs.
+    server.install_signal_handlers = lambda: None  # type: ignore[attr-defined]
+
+    server_task = asyncio.create_task(server.serve())
+    try:
+        await stop_event.wait()
+    finally:
+        server.should_exit = True
+        try:
+            await asyncio.wait_for(server_task, timeout=5.0)
+        except TimeoutError:
+            server.force_exit = True
+            await server_task
 
 
 def _build_llm_provider(settings: Settings) -> LLMProvider:
@@ -107,7 +214,8 @@ async def _run(settings: Settings) -> None:
     )
     log.info(
         "google calendar ready (calendar_id=%s tz=%s)",
-        settings.google_calendar_id, settings.user_tz.key,
+        settings.google_calendar_id,
+        settings.user_tz.key,
     )
 
     # Manager (replaces the legacy stub that used to live in
@@ -139,6 +247,14 @@ async def _run(settings: Settings) -> None:
     intelligence_persona = load_intelligence_persona(Path("prompts/intelligence.md"))
     intelligence_cfg = load_intelligence_config(Path("prompts/intelligence.toml"))
     intelligence_watchlist = load_watchlist(Path("prompts/intelligence.toml"))
+
+    # 6e: webapp config loaded from the same file, shared between the agent
+    # (for building link URLs in get_report_link) and the webapp (for
+    # binding and filesystem paths).
+    _intel_toml_data = tomllib.loads(Path("prompts/intelligence.toml").read_text(encoding="utf-8"))
+    if "web" not in _intel_toml_data:
+        raise RuntimeError("prompts/intelligence.toml missing [web] section — required for 6e")
+    web_config = WebConfig.from_toml_section(_intel_toml_data["web"])
 
     twitterapi_key = os.environ.get("TWITTERAPI_IO_API_KEY", "").strip()
     if not twitterapi_key:
@@ -173,6 +289,7 @@ async def _run(settings: Settings) -> None:
         watchlist=intelligence_watchlist,
         reports_dir=reports_dir,
         user_tz=settings.user_tz,
+        public_base_url=web_config.public_base_url,
     )
     register_intelligence(intelligence.handle)
     log.info(
@@ -192,9 +309,7 @@ async def _run(settings: Settings) -> None:
     # Sanity-check that every registered agent has a token.
     for agent_name in AGENT_SPECS:
         if agent_name not in settings.bot_tokens:
-            raise RuntimeError(
-                f"agent {agent_name!r} is registered but has no bot token in .env"
-            )
+            raise RuntimeError(f"agent {agent_name!r} is registered but has no bot token in .env")
 
     # Build orchestrator first; sender is attached after bot apps exist.
     # We construct a placeholder and swap in RealBotSender once built.
@@ -236,12 +351,11 @@ async def _run(settings: Settings) -> None:
     # every restart replays stale updates from previous runs (including
     # ones that previous crashed processes never confirmed), which
     # silently double-feeds the orchestrator.
+    stop_event = asyncio.Event()
     async with asyncio.TaskGroup() as tg:
         for name, app in apps.items():
             assert app.updater is not None
-            tg.create_task(
-                app.updater.start_polling(drop_pending_updates=True)
-            )
+            tg.create_task(app.updater.start_polling(drop_pending_updates=True))
             log.info("bot %s polling", name)
 
         for entry in pulse_entries:
@@ -254,8 +368,29 @@ async def _run(settings: Settings) -> None:
             )
             log.info("pulse task spawned: %s", entry.name)
 
+        tg.create_task(_run_web(web_config=web_config, stop_event=stop_event))
+        log.info(
+            "intelligence webapp task spawned: bound to %s:%d",
+            web_config.bind_host,
+            web_config.bind_port,
+        )
+
+        if intelligence_cfg.daily_pulse_hour is not None:
+            tg.create_task(
+                _run_intelligence_daily_pulse(
+                    intelligence=intelligence,
+                    user_tz=settings.user_tz,
+                    pulse_hour=intelligence_cfg.daily_pulse_hour,
+                    stop_event=stop_event,
+                )
+            )
+            log.info(
+                "intelligence daily pulse spawned: %02d:00 %s",
+                intelligence_cfg.daily_pulse_hour,
+                settings.user_tz.key,
+            )
+
         # Run forever until cancelled.
-        stop_event = asyncio.Event()
         await stop_event.wait()
 
 
