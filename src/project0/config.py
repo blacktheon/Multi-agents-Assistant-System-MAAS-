@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from dotenv import load_dotenv
@@ -29,6 +30,7 @@ class Settings:
     google_calendar_id: str
     google_token_path: Path
     google_client_secrets_path: Path
+    anthropic_cache_ttl: Literal["ephemeral", "1h"] = "ephemeral"
 
 
 def _parse_int_csv(name: str, raw: str) -> frozenset[int]:
@@ -79,6 +81,12 @@ def load_settings() -> Settings:
     if not anthropic_api_key.startswith("sk-"):
         raise RuntimeError("ANTHROPIC_API_KEY looks malformed (expected 'sk-...' prefix)")
 
+    raw_ttl = os.environ.get("ANTHROPIC_CACHE_TTL", "ephemeral")
+    if raw_ttl not in ("ephemeral", "1h"):
+        raise RuntimeError(
+            f"ANTHROPIC_CACHE_TTL must be 'ephemeral' or '1h', got {raw_ttl!r}"
+        )
+
     store_path = os.environ.get("STORE_PATH", "").strip() or "data/store.db"
     log_level = os.environ.get("LOG_LEVEL", "").strip() or "INFO"
 
@@ -109,4 +117,5 @@ def load_settings() -> Settings:
         google_calendar_id=google_calendar_id,
         google_token_path=google_token_path,
         google_client_secrets_path=google_client_secrets_path,
+        anthropic_cache_ttl=raw_ttl,  # type: ignore[arg-type]
     )
