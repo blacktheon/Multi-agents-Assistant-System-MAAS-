@@ -71,3 +71,60 @@ def append_thumbs(event: FeedbackEvent, feedback_dir: Path) -> None:
         f.write(event.to_jsonl_line())
         f.flush()
         os.fsync(f.fileno())
+
+
+def _relevant_month_files(report_date: str, feedback_dir: Path) -> list[Path]:
+    """Return the current-month and previous-month JSONL paths for a given
+    report_date, in chronological order (oldest first). Doesn't check
+    existence; the caller filters. Handles December→January rollover."""
+    year, month, _ = report_date.split("-")
+    year_i, month_i = int(year), int(month)
+    prev_year, prev_month = (year_i - 1, 12) if month_i == 1 else (year_i, month_i - 1)
+    return [
+        feedback_dir / f"{prev_year:04d}-{prev_month:02d}.jsonl",
+        feedback_dir / f"{year_i:04d}-{month_i:02d}.jsonl",
+        # Also include the next month to handle the "view March report in
+        # April and click a thumb" edge case. The click event stamps its ts
+        # as April but references a March report_date.
+        *(
+            [feedback_dir / f"{year_i:04d}-{month_i + 1:02d}.jsonl"]
+            if month_i < 12
+            else [feedback_dir / f"{year_i + 1:04d}-01.jsonl"]
+        ),
+    ]
+
+
+def load_thumbs_state_for(
+    report_date: str, feedback_dir: Path
+) -> dict[str, int]:
+    """Return current thumbs state for a given report_date as {item_id: score}.
+    Only items with a non-zero current score are included.
+
+    Scans the previous, current, and next month's JSONL files to cover all
+    edge cases around month-boundary clicks. Uses latest-write-wins ordering
+    (file order within a file equals chronological order because append
+    happens at write-time with a monotonic ts)."""
+    state: dict[str, int] = {}
+    for path in _relevant_month_files(report_date, feedback_dir):
+        if not path.exists():
+            continue
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    evt = json.loads(line)
+                except json.JSONDecodeError:
+                    log.warning("skipping corrupt feedback line in %s", path)
+                    continue
+                if evt.get("type") != "thumbs":
+                    continue
+                if evt.get("report_date") != report_date:
+                    continue
+                item_id = evt.get("item_id")
+                score = evt.get("score")
+                if not isinstance(item_id, str) or score not in (-1, 0, 1):
+                    continue
+                state[item_id] = score
+    return {k: v for k, v in state.items() if v != 0}
