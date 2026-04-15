@@ -3,10 +3,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-import pytest
-
 from project0.intelligence_web.feedback import FeedbackEvent, append_thumbs
-
 
 TZ = ZoneInfo("Asia/Shanghai")
 
@@ -83,8 +80,6 @@ def test_unicode_preserved(tmp_path: Path) -> None:
 
 
 def test_event_has_server_side_timestamp() -> None:
-    evt = FeedbackEvent.thumbs(
-        report_date="2026-04-15", item_id="n1", score=1, tz=TZ
-    )
+    evt = FeedbackEvent.thumbs(report_date="2026-04-15", item_id="n1", score=1, tz=TZ)
     assert evt.ts.tzinfo is not None
     assert evt.ts.year == 2026 or evt.ts.year >= 2026  # sanity

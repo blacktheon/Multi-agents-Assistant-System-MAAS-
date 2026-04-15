@@ -1,7 +1,7 @@
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
-from zoneinfo import ZoneInfo
 
 from project0.intelligence_web.config import WebConfig
 
@@ -51,7 +51,5 @@ def test_rejects_missing_public_base_url() -> None:
 
 
 def test_accepts_https_base_url() -> None:
-    cfg = WebConfig.from_toml_section(
-        {"public_base_url": "https://intel.example.com"}
-    )
+    cfg = WebConfig.from_toml_section({"public_base_url": "https://intel.example.com"})
     assert cfg.public_base_url == "https://intel.example.com"

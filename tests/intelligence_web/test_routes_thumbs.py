@@ -4,9 +4,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 
-def test_thumbs_up_writes_event_to_log(
-    client: TestClient, tmp_feedback_dir: Path
-) -> None:
+def test_thumbs_up_writes_event_to_log(client: TestClient, tmp_feedback_dir: Path) -> None:
     resp = client.post(
         "/api/feedback/thumbs",
         json={"report_date": "2026-04-15", "item_id": "n1", "score": 1},
@@ -23,9 +21,7 @@ def test_thumbs_up_writes_event_to_log(
     assert evt["report_date"] == "2026-04-15"
 
 
-def test_thumbs_down_writes_event(
-    client: TestClient, tmp_feedback_dir: Path
-) -> None:
+def test_thumbs_down_writes_event(client: TestClient, tmp_feedback_dir: Path) -> None:
     client.post(
         "/api/feedback/thumbs",
         json={"report_date": "2026-04-15", "item_id": "n2", "score": -1},
@@ -34,9 +30,7 @@ def test_thumbs_down_writes_event(
     assert json.loads(line)["score"] == -1
 
 
-def test_thumbs_zero_writes_clear_event(
-    client: TestClient, tmp_feedback_dir: Path
-) -> None:
+def test_thumbs_zero_writes_clear_event(client: TestClient, tmp_feedback_dir: Path) -> None:
     resp = client.post(
         "/api/feedback/thumbs",
         json={"report_date": "2026-04-15", "item_id": "n1", "score": 0},
@@ -82,9 +76,7 @@ def test_thumbs_unknown_report_date_still_accepted(
     assert list(tmp_feedback_dir.glob("*.jsonl"))
 
 
-def test_thumbs_event_has_server_timestamp(
-    client: TestClient, tmp_feedback_dir: Path
-) -> None:
+def test_thumbs_event_has_server_timestamp(client: TestClient, tmp_feedback_dir: Path) -> None:
     client.post(
         "/api/feedback/thumbs",
         json={"report_date": "2026-04-15", "item_id": "n1", "score": 1},

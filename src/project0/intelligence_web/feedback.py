@@ -24,9 +24,9 @@ ThumbsScore = Literal[-1, 0, 1]
 
 @dataclass(frozen=True)
 class FeedbackEvent:
-    ts: datetime                     # timezone-aware
+    ts: datetime  # timezone-aware
     type: Literal["thumbs"]
-    report_date: str                 # YYYY-MM-DD
+    report_date: str  # YYYY-MM-DD
     item_id: str
     score: ThumbsScore
 
@@ -38,7 +38,7 @@ class FeedbackEvent:
         item_id: str,
         score: ThumbsScore,
         tz: ZoneInfo,
-    ) -> "FeedbackEvent":
+    ) -> FeedbackEvent:
         return cls(
             ts=datetime.now(tz=tz),
             type="thumbs",
@@ -86,9 +86,7 @@ def _all_feedback_files(feedback_dir: Path) -> list[Path]:
     return sorted(feedback_dir.glob("[0-9][0-9][0-9][0-9]-[0-9][0-9].jsonl"))
 
 
-def load_thumbs_state_for(
-    report_date: str, feedback_dir: Path
-) -> dict[str, int]:
+def load_thumbs_state_for(report_date: str, feedback_dir: Path) -> dict[str, int]:
     """Return current thumbs state for a given report_date as {item_id: score}.
     Only items with a non-zero current score are included.
 

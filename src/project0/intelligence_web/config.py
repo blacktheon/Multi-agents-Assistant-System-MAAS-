@@ -23,7 +23,7 @@ class WebConfig:
     user_tz: ZoneInfo
 
     @classmethod
-    def from_toml_section(cls, section: dict[str, Any]) -> "WebConfig":
+    def from_toml_section(cls, section: dict[str, Any]) -> WebConfig:
         public_base_url = section["public_base_url"]
         if not public_base_url.startswith(("http://", "https://")):
             raise RuntimeError(

@@ -6,8 +6,9 @@ so it can be unit-tested without touching HTML."""
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import date, datetime
-from typing import Any, Iterable
+from typing import Any
 from zoneinfo import ZoneInfo
 
 _IMPORTANCE_ORDER = {"high": 0, "medium": 1, "low": 2}

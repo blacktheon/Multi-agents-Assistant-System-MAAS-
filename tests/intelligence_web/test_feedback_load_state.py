@@ -75,7 +75,7 @@ def test_skips_corrupt_lines(tmp_path: Path) -> None:
     fb.mkdir()
     (fb / "2026-04.jsonl").write_text(
         '{"ts":"2026-04-15T10:00:00+08:00","type":"thumbs","report_date":"2026-04-15","item_id":"n1","score":1}\n'
-        '{broken json here\n'
+        "{broken json here\n"
         '{"ts":"2026-04-15T11:00:00+08:00","type":"thumbs","report_date":"2026-04-15","item_id":"n2","score":-1}\n',
         encoding="utf-8",
     )

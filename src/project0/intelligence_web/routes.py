@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
@@ -23,6 +24,7 @@ class ThumbsPayload(BaseModel):
     item_id: str = Field(min_length=1, max_length=64)
     score: int = Field(ge=-1, le=1)
 
+
 router = APIRouter()
 
 
@@ -34,15 +36,13 @@ def _templates(request: Request) -> Jinja2Templates:
     return request.app.state.templates  # type: ignore[no-any-return]
 
 
-def _render_report_page(
-    request: Request, cfg: WebConfig, target: date
-) -> HTMLResponse:
+def _render_report_page(request: Request, cfg: WebConfig, target: date) -> HTMLResponse:
     report_path = cfg.reports_dir / f"{target.isoformat()}.json"
     if not report_path.exists():
         return HTMLResponse(
-            _templates(request).env.get_template("not_found.html").render(
-                {"request": request, "missing_date": target.isoformat()}
-            ),
+            _templates(request)
+            .env.get_template("not_found.html")
+            .render({"request": request, "missing_date": target.isoformat()}),
             status_code=404,
         )
     report_dict = read_report(report_path)
@@ -72,8 +72,8 @@ async def report_by_date(request: Request, date_str: str) -> HTMLResponse:
     cfg = _cfg(request)
     try:
         target = date.fromisoformat(date_str)
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"bad date: {date_str}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"bad date: {date_str}") from e
     return _render_report_page(request, cfg, target)
 
 
@@ -81,9 +81,7 @@ async def report_by_date(request: Request, date_str: str) -> HTMLResponse:
 async def history(request: Request) -> HTMLResponse:
     cfg = _cfg(request)
     dates = list_report_dates(cfg.reports_dir)
-    return _templates(request).TemplateResponse(
-        request, "history.html", {"dates": dates}
-    )
+    return _templates(request).TemplateResponse(request, "history.html", {"dates": dates})
 
 
 @router.post("/api/feedback/thumbs")

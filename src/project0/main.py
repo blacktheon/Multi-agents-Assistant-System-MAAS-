@@ -64,8 +64,10 @@ async def _run_web(
         lifespan="on",
     )
     server = uvicorn.Server(config)
-    # main.py owns signals; prevent uvicorn from installing its own handlers
-    server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
+    # main.py owns signals; prevent uvicorn from installing its own handlers.
+    # The attribute exists on uvicorn.Server at runtime but isn't exposed in
+    # the stubs; `setattr` sidesteps the attr-defined check.
+    setattr(server, "install_signal_handlers", lambda: None)
 
     server_task = asyncio.create_task(server.serve())
     try:

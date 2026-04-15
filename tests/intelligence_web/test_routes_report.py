@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -83,8 +82,8 @@ def test_prev_next_hrefs_rendered_when_applicable(
     write_report_fn(tmp_reports_dir, {**sample_report, "date": "2026-04-15"})
     write_report_fn(tmp_reports_dir, {**sample_report, "date": "2026-04-16"})
     body = client.get("/reports/2026-04-15").text
-    assert 'href="/reports/2026-04-14"' in body   # older (prev)
-    assert 'href="/reports/2026-04-16"' in body   # newer (next)
+    assert 'href="/reports/2026-04-14"' in body  # older (prev)
+    assert 'href="/reports/2026-04-16"' in body  # newer (next)
 
 
 def test_date_dropdown_contains_all_dates(
