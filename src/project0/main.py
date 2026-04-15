@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import tomllib
 from pathlib import Path
 
 from project0.agents.manager import Manager, load_manager_config, load_manager_persona
@@ -40,6 +41,42 @@ def _setup_logging(level: str) -> None:
 def _ensure_store_dir(store_path: str) -> None:
     p = Path(store_path)
     p.parent.mkdir(parents=True, exist_ok=True)
+
+
+async def _run_web(
+    *,
+    web_config: "WebConfig",  # type: ignore[name-defined]  # forward ref; imported inside _run
+    stop_event: asyncio.Event,
+) -> None:
+    """Run the Intelligence webapp (6e) as an asyncio task alongside the bot
+    pollers. Shares ``stop_event`` with the rest of ``_run`` so ``Ctrl-C``
+    stops everything together."""
+    from project0.intelligence_web.app import create_app
+    import uvicorn
+
+    app = create_app(web_config)
+    config = uvicorn.Config(
+        app,
+        host=web_config.bind_host,
+        port=web_config.bind_port,
+        log_level="info",
+        access_log=True,
+        lifespan="on",
+    )
+    server = uvicorn.Server(config)
+    # main.py owns signals; prevent uvicorn from installing its own handlers
+    server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
+
+    server_task = asyncio.create_task(server.serve())
+    try:
+        await stop_event.wait()
+    finally:
+        server.should_exit = True
+        try:
+            await asyncio.wait_for(server_task, timeout=5.0)
+        except asyncio.TimeoutError:
+            server.force_exit = True
+            await server_task
 
 
 def _build_llm_provider(settings: Settings) -> LLMProvider:
@@ -140,6 +177,19 @@ async def _run(settings: Settings) -> None:
     intelligence_cfg = load_intelligence_config(Path("prompts/intelligence.toml"))
     intelligence_watchlist = load_watchlist(Path("prompts/intelligence.toml"))
 
+    # 6e: webapp config loaded from the same file, shared between the agent
+    # (for building link URLs in get_report_link) and the webapp (for
+    # binding and filesystem paths).
+    from project0.intelligence_web.config import WebConfig
+    _intel_toml_data = tomllib.loads(
+        Path("prompts/intelligence.toml").read_text(encoding="utf-8")
+    )
+    if "web" not in _intel_toml_data:
+        raise RuntimeError(
+            "prompts/intelligence.toml missing [web] section — required for 6e"
+        )
+    web_config = WebConfig.from_toml_section(_intel_toml_data["web"])
+
     twitterapi_key = os.environ.get("TWITTERAPI_IO_API_KEY", "").strip()
     if not twitterapi_key:
         raise RuntimeError(
@@ -173,6 +223,7 @@ async def _run(settings: Settings) -> None:
         watchlist=intelligence_watchlist,
         reports_dir=reports_dir,
         user_tz=settings.user_tz,
+        public_base_url=web_config.public_base_url,
     )
     register_intelligence(intelligence.handle)
     log.info(
@@ -236,6 +287,7 @@ async def _run(settings: Settings) -> None:
     # every restart replays stale updates from previous runs (including
     # ones that previous crashed processes never confirmed), which
     # silently double-feeds the orchestrator.
+    stop_event = asyncio.Event()
     async with asyncio.TaskGroup() as tg:
         for name, app in apps.items():
             assert app.updater is not None
@@ -254,8 +306,14 @@ async def _run(settings: Settings) -> None:
             )
             log.info("pulse task spawned: %s", entry.name)
 
+        tg.create_task(_run_web(web_config=web_config, stop_event=stop_event))
+        log.info(
+            "intelligence webapp task spawned: bound to %s:%d",
+            web_config.bind_host,
+            web_config.bind_port,
+        )
+
         # Run forever until cancelled.
-        stop_event = asyncio.Event()
         await stop_event.wait()
 
 
