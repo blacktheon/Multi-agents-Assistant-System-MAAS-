@@ -1,0 +1,28 @@
+# Learning agent configuration.
+
+[llm]
+model               = "claude-sonnet-4-6"
+max_tokens_reply    = 2048
+max_tool_iterations = 5
+
+[context]
+transcript_window = 10
+
+[notion]
+sync_interval_seconds = 30
+
+[review]
+reminder_interval_seconds = 1800
+intervals_days = [1, 3, 7, 14, 30]
+
+[processing]
+max_summary_tokens = 800
+
+[[pulse]]
+name          = "notion_sync"
+every_seconds = 30
+
+[[pulse]]
+name          = "review_reminder"
+every_seconds = 1800
+chat_id_env   = "LEARNING_PULSE_CHAT_ID"
