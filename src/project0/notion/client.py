@@ -146,18 +146,18 @@ class NotionClient:
     ) -> list[KnowledgeEntry]:
         """Internal: paginated database query.
 
-        notion-client v3 moved database querying to ``data_sources.query``.
-        The database_id works as a data_source_id.
+        notion-client v3 dropped the ``databases.query`` convenience method.
+        We call the Notion API endpoint directly via the raw ``request`` method.
         """
         entries: list[KnowledgeEntry] = []
-        kwargs: dict[str, Any] = {
-            "page_size": page_size,
-        }
+        body: dict[str, Any] = {"page_size": page_size}
         if filter_payload:
-            kwargs["filter"] = filter_payload
+            body["filter"] = filter_payload
         try:
-            resp = await self._client.data_sources.query(
-                self._database_id, **kwargs
+            resp = await self._client.request(
+                path=f"databases/{self._database_id}/query",
+                method="POST",
+                body=body,
             )
         except Exception as e:
             raise NotionClientError(f"query_database failed: {e}") from e
