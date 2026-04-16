@@ -677,3 +677,34 @@ class TestLLMUsageRollups:
             "input_tokens", "cache_creation_input_tokens",
             "cache_read_input_tokens", "output_tokens", "envelope_id",
         }
+
+
+class TestUserFactsTrustBoundary:
+    """D.6: Each SQL verb touching user_facts appears in exactly one module."""
+
+    def test_insert_only_in_store(self) -> None:
+        src = Path(__file__).resolve().parent.parent / "src" / "project0"
+        store_src = (src / "store.py").read_text()
+        assert store_src.count("INSERT INTO user_facts") == 1
+        for py in src.rglob("*.py"):
+            if py.name == "store.py":
+                continue
+            assert "INSERT INTO user_facts" not in py.read_text(), py
+
+    def test_update_only_in_store(self) -> None:
+        src = Path(__file__).resolve().parent.parent / "src" / "project0"
+        store_src = (src / "store.py").read_text()
+        assert store_src.count("UPDATE user_facts") >= 1
+        for py in src.rglob("*.py"):
+            if py.name == "store.py":
+                continue
+            assert "UPDATE user_facts" not in py.read_text(), py
+
+    def test_delete_only_in_store(self) -> None:
+        src = Path(__file__).resolve().parent.parent / "src" / "project0"
+        store_src = (src / "store.py").read_text()
+        assert store_src.count("DELETE FROM user_facts") == 1
+        for py in src.rglob("*.py"):
+            if py.name == "store.py":
+                continue
+            assert "DELETE FROM user_facts" not in py.read_text(), py

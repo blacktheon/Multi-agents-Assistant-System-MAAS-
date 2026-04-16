@@ -86,6 +86,8 @@ class MAASSupervisor:
                 raise
             self._state = "running"
             log.info("MAAS spawned, pid=%s", self._proc.pid)
+            if self._watcher is not None:
+                self._watcher.cancel()
             self._watcher = asyncio.create_task(self._watch(self._proc))
 
     async def stop(self) -> None:
