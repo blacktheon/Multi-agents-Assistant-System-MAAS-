@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Awaitable, Callable, Literal, Protocol
+from collections.abc import Awaitable, Callable
+from typing import Literal, Protocol
 
 log = logging.getLogger(__name__)
 
@@ -96,7 +97,7 @@ class MAASSupervisor:
             proc.terminate()
             try:
                 rc = await asyncio.wait_for(proc.wait(), timeout=self._stop_timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 log.warning("MAAS did not exit after SIGTERM; sending SIGKILL")
                 proc.kill()
                 rc = await proc.wait()

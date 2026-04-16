@@ -28,4 +28,5 @@ def test_post_overwrites_file(client: TestClient, project_root: Path) -> None:
 def test_post_survives_chinese_content(client: TestClient, project_root: Path) -> None:
     new_content = "out_of_band_notes: |\n  我喜欢吃寿司\n"
     client.post("/profile", data={"content": new_content})
-    assert "我喜欢吃寿司" in (project_root / "data" / "user_profile.yaml").read_text(encoding="utf-8")
+    saved = (project_root / "data" / "user_profile.yaml").read_text(encoding="utf-8")
+    assert "我喜欢吃寿司" in saved

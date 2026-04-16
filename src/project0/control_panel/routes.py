@@ -79,10 +79,7 @@ async def facts_list(
     templates = request.app.state.templates
     store = request.app.state.store
     reader = UserFactsReader("human", store.conn)
-    if show_inactive:
-        facts = reader.all_including_inactive()
-    else:
-        facts = reader.active(limit=500)
+    facts = reader.all_including_inactive() if show_inactive else reader.active(limit=500)
     return templates.TemplateResponse(
         request, "facts.html",
         _ctx(request, facts=facts, show_inactive=bool(show_inactive)),
