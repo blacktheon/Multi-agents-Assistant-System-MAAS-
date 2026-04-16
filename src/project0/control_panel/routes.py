@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from project0.control_panel.paths import ALLOWED_AGENT_NAMES, toml_path
+from project0.control_panel.paths import ALLOWED_AGENT_NAMES, persona_path, toml_path
 from project0.control_panel.writes import atomic_write_text
 from project0.store import UserFactsReader, UserFactsWriter
 
@@ -170,3 +170,36 @@ async def toml_edit_post(
         raise HTTPException(status_code=404, detail=str(e)) from e
     atomic_write_text(path, content)
     return RedirectResponse(url=f"/toml/{name}", status_code=303)
+
+
+@router.get("/personas")
+async def personas_list(request: Request) -> object:
+    templates = request.app.state.templates
+    return templates.TemplateResponse(
+        request, "personas_list.html",
+        _ctx(request, names=ALLOWED_AGENT_NAMES),
+    )
+
+@router.get("/personas/{name}")
+async def personas_edit_get(request: Request, name: str) -> object:
+    templates = request.app.state.templates
+    try:
+        path = persona_path(name, project_root=request.app.state.project_root)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    content = path.read_text(encoding="utf-8") if path.exists() else ""
+    return templates.TemplateResponse(
+        request, "personas_edit.html",
+        _ctx(request, name=name, content=content),
+    )
+
+@router.post("/personas/{name}")
+async def personas_edit_post(
+    request: Request, name: str, content: str = Form(...),
+) -> RedirectResponse:
+    try:
+        path = persona_path(name, project_root=request.app.state.project_root)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    atomic_write_text(path, content)
+    return RedirectResponse(url=f"/personas/{name}", status_code=303)
