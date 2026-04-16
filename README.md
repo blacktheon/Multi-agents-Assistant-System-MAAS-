@@ -1,6 +1,6 @@
 # MAAS — Multi-Agent Assistant System
 
-**A personal assistant that isn't one agent — it's a small team.** Three specialists live inside Telegram as three separate bots, each with their own character, memory, and skills. They coordinate with each other, handle your calendar, brief you on tech news every morning, and reply in the same chat you already use to talk to friends.
+**A personal assistant that isn't one agent — it's a small team.** Four specialists live inside Telegram as four separate bots, each with their own character, memory, and skills. They coordinate with each other, handle your calendar, brief you on tech news every morning, manage your knowledge base, and reply in the same chat you already use to talk to friends.
 
 Built with Python 3.12, FastAPI, SQLite (WAL mode), and Claude (Anthropic API). Ships with a WebUI control panel for managing settings, editing agent personas, and monitoring token usage from your phone. Single user. Speaks Chinese.
 
@@ -34,6 +34,15 @@ Your personal tech-news briefer.
 - Ships with a **web page** for reading the briefings on your phone over Tailscale — browsable history, thumbs up/down feedback, tap-to-open source tweets
 - When you ask "把今天的日报发给我", she replies with a tappable URL to the rendered page
 
+### 温书瑶 · Learning
+Your knowledge curator and review coach.
+
+- Manages your knowledge base through **Notion** — Notion is the source of truth, MAAS keeps a lightweight local index
+- Send her a link or paste text → she fetches, summarizes, extracts key points, and saves a structured entry to your Notion database
+- Runs a **spaced repetition** review system with fixed intervals (1, 3, 7, 14, 30 days) — reminds you when items are due
+- Syncs with Notion every 30 seconds so you can browse, edit, and reorganize entries on your phone and she stays in sync
+- Warm older-sister persona — calls you 少爷, gently nudges you to review, celebrates when you complete reviews
+
 ### Behind the scenes
 - A shared **orchestrator** routes every Telegram message to the right agent based on `@mentions` and sticky focus
 - A single **audit log** (SQLite) captures every envelope — user message, agent reply, internal delegation, pulse tick — with parent-child links for full conversation trees
@@ -66,9 +75,9 @@ This installs Python 3.12 via `uv` and all dependencies.
 
 Open Telegram and talk to `@BotFather`:
 
-1. `/newbot` three times — create one bot each for **Manager**, **Secretary**, and **Intelligence**. Save all three tokens somewhere.
+1. `/newbot` four times — create one bot each for **Manager**, **Secretary**, **Intelligence**, and **Learning**. Save all four tokens somewhere.
 2. For each bot run `/setprivacy` → pick the bot → **Disable**. This is required so bots in groups can see every message, not only direct mentions.
-3. Create a Telegram group, add all three bots, send a test message so the group exists.
+3. Create a Telegram group, add all four bots, send a test message so the group exists.
 4. Find the group's numeric `chat_id` (it's negative and starts with `-100`). Easiest way: run MAAS once with `LOG_LEVEL=DEBUG` and watch the logs.
 5. Find your own Telegram user id by talking to `@userinfobot`.
 
@@ -83,7 +92,24 @@ One-time, about five minutes at https://console.cloud.google.com:
 
 The first time you run MAAS it will pop open a browser window to authorize. The refresh token is cached automatically after that.
 
-### Step 4 — Configure `.env`
+### Step 4 — Set up Notion (for Learning)
+
+1. Go to https://www.notion.so/my-integrations and create a new **internal integration** called "MAAS Knowledge". Copy the "Internal Integration Secret" (starts with `ntn_`).
+2. Create a new Notion database (full page) with these columns:
+
+   | Column name | Type | Options |
+   |-------------|------|---------|
+   | Title | Title | (default first column, rename from "Name") |
+   | Source | URL | |
+   | Source Type | Select | `link`, `text` |
+   | Tags | Multi-select | (leave empty, agent creates them) |
+   | User Notes | Text | |
+   | Status | Select | `active`, `archived` |
+
+3. On the database page, click `...` → **Connections** → find "MAAS Knowledge" → **Connect**.
+4. Copy the database ID from the URL: `https://www.notion.so/workspace/DATABASE_ID_HERE?v=...`
+
+### Step 5 — Configure `.env`
 
 ```bash
 cp .env.example .env
@@ -96,6 +122,7 @@ Fill in your real values:
 TELEGRAM_BOT_TOKEN_MANAGER=...
 TELEGRAM_BOT_TOKEN_SECRETARY=...
 TELEGRAM_BOT_TOKEN_INTELLIGENCE=...
+TELEGRAM_BOT_TOKEN_LEARNING=...
 
 TELEGRAM_ALLOWED_CHAT_IDS=-100123456789   # your group chat id
 TELEGRAM_ALLOWED_USER_IDS=12345678        # your Telegram user id
@@ -110,13 +137,18 @@ GOOGLE_CALENDAR_ID=primary                # or a non-primary calendar id
 # --- Manager pulse (where calendar reminders get delivered) ---
 MANAGER_PULSE_CHAT_ID=-100123456789       # same as your allowed group id
 
-# --- Intelligence (Step 5) ---
+# --- Intelligence (Step 6) ---
 TWITTERAPI_IO_API_KEY=...
+
+# --- Learning / Notion (Step 4) ---
+NOTION_INTERNAL_INTEGRATION_SECRET=ntn_...
+NOTION_DATABASE_ID=...
+LEARNING_PULSE_CHAT_ID=-100123456789     # same as your allowed group id
 ```
 
 The full list of environment variables is at the bottom of this README under **Configuration reference**.
 
-### Step 5 — Set the webapp's Tailscale address
+### Step 6 — Set the webapp's Tailscale address
 
 Intelligence's daily reports render in a web page you'll read from your phone. You need to tell the agent what URL to hand you when you ask for a report link.
 
@@ -137,11 +169,11 @@ public_base_url = "http://100.115.87.21:8080"
 
 (If you've enabled Tailscale MagicDNS you can use a friendlier name like `http://edgexpert-b33a:8080` instead of the raw IP.)
 
-### Step 6 — Install Tailscale on your phone
+### Step 7 — Install Tailscale on your phone
 
 Get the Tailscale app from the App Store or Google Play, log in with the same account you used on the server, and flip the toggle on. That's it — it stays on and uses essentially zero battery. Now your phone can reach the server from anywhere (cellular, coffee-shop WiFi, hotel, another country) as if they were on the same network.
 
-### Step 7 — Start it up
+### Step 8 — Start it up
 
 ```bash
 uv run python -m project0.control_panel
@@ -156,9 +188,13 @@ secretary registered (model=claude-sonnet-4-6)
 google calendar ready (calendar_id=primary tz=Asia/Shanghai)
 manager registered (model=claude-sonnet-4-6)
 intelligence registered (summarizer=claude-opus-4-6, qa=claude-sonnet-4-6, watchlist=20)
+learning registered (model=claude-sonnet-4-6)
 bot manager polling
 bot secretary polling
 bot intelligence polling
+bot learning polling
+pulse task spawned: notion_sync
+pulse task spawned: review_reminder
 intelligence webapp task spawned: bound to 0.0.0.0:8080
 intelligence daily pulse spawned: 10:00 Asia/Shanghai
 ```
@@ -197,6 +233,17 @@ Create a calendar event for ~30 minutes from now. At the next pulse tick, Secret
 - Ask: `把今天的日报发给我` — she sends you a tappable web URL
 - Ask: `今天最要紧的是什么？` — she answers from the pre-loaded report and cites source tweets
 - Ask: `昨天有什么新的？` — she looks back at yesterday's report
+
+### Knowledge base (Learning)
+
+- `@learning 帮我学习一下这篇文章 https://example.com/article` — she fetches, summarizes, extracts key points, saves to Notion
+- Paste text directly: `帮我学习一下：[your text here]` — she structures it into a knowledge entry
+- Add your thoughts: `帮我学习 https://... 我觉得这个对 XXX 项目有用` — your notes get attached to the entry
+- `复习计划` — lists what's due for review in the next 7 days
+- `已复习 1` — marks an item as reviewed, advances to the next interval
+- Every 30 minutes she checks for due reviews and sends a gentle reminder
+
+> **Note:** WeChat article links (`mp.weixin.qq.com`) often require login and can't be scraped. Paste the article text directly instead.
 
 ### Reading reports on your phone
 
@@ -266,6 +313,7 @@ All the env vars:
 TELEGRAM_BOT_TOKEN_MANAGER=...
 TELEGRAM_BOT_TOKEN_SECRETARY=...
 TELEGRAM_BOT_TOKEN_INTELLIGENCE=...
+TELEGRAM_BOT_TOKEN_LEARNING=...
 
 # Allow-lists — required. MAAS refuses to start without these.
 TELEGRAM_ALLOWED_CHAT_IDS=-100123456789      # comma-separated for multiple
@@ -292,6 +340,11 @@ MANAGER_PULSE_CHAT_ID=-100123456789
 
 # Intelligence
 TWITTERAPI_IO_API_KEY=...
+
+# Notion (Learning agent)
+NOTION_INTERNAL_INTEGRATION_SECRET=ntn_...
+NOTION_DATABASE_ID=...
+LEARNING_PULSE_CHAT_ID=-100123456789
 ```
 
 Agent-specific configuration lives in `prompts/`:
@@ -299,6 +352,7 @@ Agent-specific configuration lives in `prompts/`:
 - `prompts/manager.md` and `manager.toml` — Manager's persona and pulse config
 - `prompts/secretary.md` and `secretary.toml` — Secretary's persona and cooldown thresholds
 - `prompts/intelligence.md` and `intelligence.toml` — Intelligence's persona, watchlist, webapp binding, daily pulse hour
+- `prompts/learning.md` and `learning.toml` — Learning's persona, Notion sync interval, review intervals, processing limits
 
 To change Intelligence's daily briefing time, edit `prompts/intelligence.toml`:
 
@@ -356,9 +410,9 @@ Telegram                  Orchestrator                Agents
 ─────────                 ────────────                ──────
 manager bot ─┐                                       Manager (LLM + calendar tools)
 secretary bot├─→  poller ─→ allow-list ─→ envelope ─→ Secretary (LLM + cooldown)
-intel bot    ┘                  ↓             ↓       Intelligence (LLM + Twitter + report tools)
-                            content dedup   focus  ↘
-                                ↓                   tool calls → GoogleCalendar, twitterapi.io, filesystem
+intel bot    ├                  ↓             ↓       Intelligence (LLM + Twitter + report tools)
+learning bot ┘            content dedup   focus  ↘   Learning (LLM + Notion tools + review schedule)
+                                ↓                   tool calls → GoogleCalendar, twitterapi.io, Notion API, filesystem
                             messages table              ↓
                                 ↑                   reply / delegate → webapp (FastAPI + Jinja2)
                                 └── PULSE_REGISTRY ──── pulse scheduler (asyncio)
@@ -373,12 +427,14 @@ intel bot    ┘                  ↓             ↓       Intelligence (LLM + 
 
 ## Storage
 
-Single SQLite file at `data/store.db`. Four tables:
+Single SQLite file at `data/store.db`. Six tables:
 
 - **`messages`** — first-class envelope log, append-only, with `parent_id` links. The audit / inspection surface.
 - **`agent_memory`** — per-agent private key-value storage. Isolation is enforced in the Python API, not in SQL.
 - **`blackboard`** — shared append-only collaboration surface between agents (underused today).
 - **`chat_focus`** — per-chat routing state; wiped on every process restart.
+- **`knowledge_index`** — lightweight mirror of Notion database page metadata (titles, tags, timestamps). Learning agent's local index.
+- **`review_schedule`** — spaced repetition state per knowledge entry (interval step, next review date, times reviewed). MAAS-internal, not stored in Notion.
 
 Access is gated through `src/project0/store.py`, which is a trust boundary — agent code never touches SQL directly.
 
@@ -390,7 +446,7 @@ Intelligence's data lives outside SQLite:
 ## Running the tests
 
 ```bash
-uv run pytest -q                 # 490+ tests, all hermetic
+uv run pytest -q                 # 520+ tests, all hermetic
 uv run mypy src/project0
 uv run ruff check src tests
 ```
@@ -422,11 +478,12 @@ src/project0/
 │   ├── provider.py            # LLMProvider Protocol, FakeProvider, AnthropicProvider (streaming + thinking)
 │   └── tools.py               # ToolSpec / ToolCall / ToolUseResult
 ├── agents/
-│   ├── _tool_loop.py          # shared agentic loop used by Manager and Intelligence
+│   ├── _tool_loop.py          # shared agentic loop used by Manager, Intelligence, and Learning
 │   ├── registry.py            # agent + listener + pulse registries
 │   ├── manager.py             # Manager (林夕): calendar tools + agentic loop + pulse
 │   ├── secretary.py           # Secretary: cooldown gate + four entry paths
-│   └── intelligence.py        # Intelligence (顾瑾): five report tools + agentic loop + daily pulse
+│   ├── intelligence.py        # Intelligence (顾瑾): five report tools + agentic loop + daily pulse
+│   └── learning.py            # Learning (温书瑶): Notion tools + review schedule + dual pulse
 ├── intelligence/              # Intelligence infrastructure (sub-project 6d)
 │   ├── source.py              # TwitterSource protocol + Tweet dataclass
 │   ├── fake_source.py         # FakeTwitterSource for tests
@@ -453,6 +510,9 @@ src/project0/
 │   ├── rendering.py           # Jinja2 setup + SVG bar chart renderer
 │   ├── templates/             # base.html + page templates
 │   └── static/                # style.css (mobile-responsive)
+├── notion/                    # Notion service (Learning agent)
+│   ├── client.py              # async wrapper around notion-client SDK
+│   └── model.py               # KnowledgeEntry + NotionClientError
 └── calendar/
     ├── auth.py                # OAuth installed-app flow
     ├── client.py              # async wrapper around google-api-python-client
@@ -462,7 +522,8 @@ src/project0/
 prompts/
 ├── manager.md / .toml         # 林夕 persona + LLM / pulse config
 ├── secretary.md / .toml       # Secretary persona + cooldown thresholds
-└── intelligence.md / .toml    # 顾瑾 persona + dual-LLM config + webapp bind + watchlist
+├── intelligence.md / .toml    # 顾瑾 persona + dual-LLM config + webapp bind + watchlist
+└── learning.md / .toml        # 温书瑶 persona + Notion sync + review intervals + processing config
 
 data/                          # all gitignored
 ├── store.db                   # envelope log
@@ -489,6 +550,7 @@ The spec + plan cycle for each sub-project lives in `docs/superpowers/`. Read in
 - `specs/2026-04-15-intelligence-agent-design.md` — Intelligence's generation pipeline, watchlist, Q&A tool surface
 - `specs/2026-04-15-intelligence-delivery-surface-design.md` — webapp, feedback capture, `get_report_link` tool, extended thinking
 - `specs/2026-04-16-control-panel-design.md` — WebUI control panel: supervisor state machine, file editors, facts CRUD, token usage
+- `specs/2026-04-16-learning-agent-design.md` — Learning agent: Notion-backed knowledge base curator + spaced repetition review coaching
 
 Implementation plans matching each spec live under `plans/`.
 
@@ -505,9 +567,10 @@ Sub-projects completed (in order):
 - **Memory hardening + token cost cut** — Layer A user profile (YAML), narrow Layer D slice (Secretary-written user facts via `remember_about_user` tool), `llm_usage` instrumentation on every LLM call, two-breakpoint cache layout (`SystemBlocks`), Manager transcript shrink (20→10), Intelligence Q&A slim + on-demand `get_report_item` tool, env-toggled 1-hour cache TTL
 - **WebUI control panel** — standalone FastAPI app supervising MAAS as a child process. Textarea editing for user profile, agent TOML configs, persona markdown, and `.env`. Full CRUD on `user_facts` (live via SQLite WAL). Token usage page with SVG bar chart and rollup tables. Mobile-responsive. Tailscale-gated, no auth.
 
+- **Learning agent** — Notion-backed knowledge base curator (温书瑶). Processes links and text into structured knowledge entries, runs spaced repetition review coaching (1/3/7/14/30-day intervals), syncs with Notion every 30 seconds for bidirectional access.
+
 Next up:
 
-- **Learning agent** — formal knowledge base writer (Layer D in the master spec)
 - **Supervisor agent** — audit + evaluation authority; built on derived views of the `messages` table
 
 Further out (in rough master-spec order):
