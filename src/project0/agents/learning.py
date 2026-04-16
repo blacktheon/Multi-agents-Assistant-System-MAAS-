@@ -358,9 +358,15 @@ class LearningAgent:
         import httpx
         import trafilatura  # type: ignore[import-untyped]
 
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
+        headers = {"User-Agent": "MAAS/1.0 (Knowledge Bot; +https://github.com)"}
+        try:
+            async with httpx.AsyncClient(
+                follow_redirects=True, timeout=30, headers=headers
+            ) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+        except httpx.HTTPError as e:
+            return f"failed to fetch URL: {e}", True
         html = resp.text
 
         extracted = trafilatura.extract(html)
