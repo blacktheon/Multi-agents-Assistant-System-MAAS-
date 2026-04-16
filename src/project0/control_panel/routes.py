@@ -11,6 +11,7 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
 from project0.control_panel.paths import ALLOWED_AGENT_NAMES, persona_path, toml_path
+from project0.control_panel.rendering import render_bar_chart_svg
 from project0.control_panel.writes import atomic_write_text
 from project0.store import UserFactsReader, UserFactsWriter
 
@@ -221,3 +222,31 @@ async def env_post(
     path = request.app.state.project_root / ".env"
     atomic_write_text(path, content)
     return RedirectResponse(url="/env", status_code=303)
+
+
+@router.get("/usage")
+async def usage(request: Request) -> object:
+    templates = request.app.state.templates
+    store = request.app.state.store
+    usage_store = store.llm_usage()
+    daily = usage_store.daily_rollup(days=30)
+    chart_rows = [
+        {
+            "day": r["day"],
+            "total": r["in_tok"] + r["cc_tok"] + r["cr_tok"] + r["out_tok"],
+        }
+        for r in reversed(daily)
+    ]
+    chart_svg = render_bar_chart_svg(chart_rows)
+    agent_rows = usage_store.agent_rollup(days=7)
+    recent_rows = usage_store.recent(limit=50)
+    return templates.TemplateResponse(
+        request, "usage.html",
+        _ctx(
+            request,
+            chart_svg=chart_svg,
+            daily_rows=daily,
+            agent_rows=agent_rows,
+            recent_rows=recent_rows,
+        ),
+    )

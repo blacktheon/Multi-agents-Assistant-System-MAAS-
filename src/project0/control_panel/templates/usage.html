@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Token Usage</h1>
+
+<h2>Daily (last 30 days)</h2>
+<div class="chart">{{ chart_svg | safe }}</div>
+<table>
+  <thead>
+    <tr><th>Day</th><th>Calls</th><th>Input</th><th>Cache-create</th><th>Cache-read</th><th>Output</th></tr>
+  </thead>
+  <tbody>
+    {% for r in daily_rows %}
+    <tr>
+      <td>{{ r.day }}</td>
+      <td>{{ "{:,}".format(r.calls) }}</td>
+      <td>{{ "{:,}".format(r.in_tok) }}</td>
+      <td>{{ "{:,}".format(r.cc_tok) }}</td>
+      <td>{{ "{:,}".format(r.cr_tok) }}</td>
+      <td>{{ "{:,}".format(r.out_tok) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>Per agent × purpose (last 7 days)</h2>
+<table>
+  <thead>
+    <tr><th>Agent</th><th>Purpose</th><th>Calls</th><th>Input (all)</th><th>Output</th></tr>
+  </thead>
+  <tbody>
+    {% for r in agent_rows %}
+    <tr>
+      <td>{{ r.agent }}</td>
+      <td>{{ r.purpose }}</td>
+      <td>{{ "{:,}".format(r.calls) }}</td>
+      <td>{{ "{:,}".format(r.in_total) }}</td>
+      <td>{{ "{:,}".format(r.out_total) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>Recent calls (last 50)</h2>
+<table>
+  <thead>
+    <tr>
+      <th>id</th><th>ts</th><th>agent</th><th>purpose</th><th>model</th>
+      <th>in</th><th>cc</th><th>cr</th><th>out</th><th>env</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in recent_rows %}
+    <tr>
+      <td>{{ r.id }}</td>
+      <td>{{ r.ts }}</td>
+      <td>{{ r.agent }}</td>
+      <td>{{ r.purpose }}</td>
+      <td>{{ r.model }}</td>
+      <td>{{ "{:,}".format(r.input_tokens) }}</td>
+      <td>{{ "{:,}".format(r.cache_creation_input_tokens) }}</td>
+      <td>{{ "{:,}".format(r.cache_read_input_tokens) }}</td>
+      <td>{{ "{:,}".format(r.output_tokens) }}</td>
+      <td>{{ r.envelope_id if r.envelope_id is not none else '—' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
