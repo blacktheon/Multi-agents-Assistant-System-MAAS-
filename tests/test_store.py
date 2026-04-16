@@ -8,8 +8,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from project0.envelope import Envelope
-from project0.store import Store
+from project0.store import Store, UserFactsWriter
 
 
 def test_store_init_schema_is_idempotent(store: Store) -> None:
@@ -502,3 +504,113 @@ def test_messages_recent_for_dm_isolates_by_agent(tmp_path: Path) -> None:
     # new method was needed in the first place).
     everything = store.messages().recent_for_chat(chat_id=USER_ID, limit=20)
     assert len(everything) == 6
+
+
+class TestUserFactsWriterExtended:
+    """Layer D writer extended for the control panel sub-project.
+
+    See docs/superpowers/specs/2026-04-16-control-panel-design.md §5.
+    Authorized authors are {'secretary', 'human'}. 'human' is the only
+    author permitted to edit or hard-delete existing facts.
+    """
+
+    def _store(self, tmp_path: Path) -> Store:
+        s = Store(tmp_path / "s.db")
+        s.init_schema()
+        return s
+
+    def test_human_writer_can_be_constructed(self, tmp_path: Path) -> None:
+        s = self._store(tmp_path)
+        UserFactsWriter("human", s.conn)  # must not raise
+
+    def test_secretary_writer_still_works(self, tmp_path: Path) -> None:
+        s = self._store(tmp_path)
+        UserFactsWriter("secretary", s.conn)
+
+    def test_unknown_agent_rejected(self, tmp_path: Path) -> None:
+        s = self._store(tmp_path)
+        with pytest.raises(PermissionError):
+            UserFactsWriter("manager", s.conn)
+        with pytest.raises(PermissionError):
+            UserFactsWriter("supervisor", s.conn)
+
+    def test_human_add_sets_author_agent_human(self, tmp_path: Path) -> None:
+        s = self._store(tmp_path)
+        w = UserFactsWriter("human", s.conn)
+        fact_id = w.add("用户喜欢寿司", topic="food")
+        row = s.conn.execute(
+            "SELECT author_agent, fact_text, topic, is_active FROM user_facts WHERE id=?",
+            (fact_id,),
+        ).fetchone()
+        assert row["author_agent"] == "human"
+        assert row["fact_text"] == "用户喜欢寿司"
+        assert row["topic"] == "food"
+        assert row["is_active"] == 1
+
+    def test_secretary_add_still_sets_author_agent_secretary(
+        self, tmp_path: Path
+    ) -> None:
+        s = self._store(tmp_path)
+        w = UserFactsWriter("secretary", s.conn)
+        fact_id = w.add("用户生日是三月十四日")
+        row = s.conn.execute(
+            "SELECT author_agent FROM user_facts WHERE id=?", (fact_id,)
+        ).fetchone()
+        assert row["author_agent"] == "secretary"
+
+    def test_reactivate(self, tmp_path: Path) -> None:
+        s = self._store(tmp_path)
+        w = UserFactsWriter("human", s.conn)
+        fid = w.add("x")
+        w.deactivate(fid)
+        assert s.conn.execute(
+            "SELECT is_active FROM user_facts WHERE id=?", (fid,)
+        ).fetchone()[0] == 0
+        w.reactivate(fid)
+        assert s.conn.execute(
+            "SELECT is_active FROM user_facts WHERE id=?", (fid,)
+        ).fetchone()[0] == 1
+
+    def test_human_edit_updates_text_and_topic(self, tmp_path: Path) -> None:
+        s = self._store(tmp_path)
+        w = UserFactsWriter("human", s.conn)
+        fid = w.add("old text", topic="old_topic")
+        original_ts = s.conn.execute(
+            "SELECT ts FROM user_facts WHERE id=?", (fid,)
+        ).fetchone()[0]
+        w.edit(fid, "new text", "new_topic")
+        row = s.conn.execute(
+            "SELECT fact_text, topic, ts, author_agent FROM user_facts WHERE id=?",
+            (fid,),
+        ).fetchone()
+        assert row["fact_text"] == "new text"
+        assert row["topic"] == "new_topic"
+        # Editing does not rewrite the original ts or author_agent:
+        assert row["ts"] == original_ts
+        assert row["author_agent"] == "human"
+
+    def test_secretary_edit_raises(self, tmp_path: Path) -> None:
+        s = self._store(tmp_path)
+        w_h = UserFactsWriter("human", s.conn)
+        fid = w_h.add("x")
+        w_s = UserFactsWriter("secretary", s.conn)
+        with pytest.raises(PermissionError):
+            w_s.edit(fid, "y", None)
+
+    def test_human_delete_removes_row(self, tmp_path: Path) -> None:
+        s = self._store(tmp_path)
+        w = UserFactsWriter("human", s.conn)
+        fid = w.add("x")
+        w.delete(fid)
+        row = s.conn.execute(
+            "SELECT id FROM user_facts WHERE id=?", (fid,)
+        ).fetchone()
+        assert row is None
+
+    def test_secretary_delete_raises(self, tmp_path: Path) -> None:
+        s = self._store(tmp_path)
+        w_h = UserFactsWriter("human", s.conn)
+        fid = w_h.add("x")
+        w_s = UserFactsWriter("secretary", s.conn)
+        with pytest.raises(PermissionError):
+            w_s.delete(fid)

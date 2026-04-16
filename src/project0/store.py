@@ -573,14 +573,28 @@ class UserFactsReader:
 
 
 class UserFactsWriter:
-    """Append-only writes to user_facts. Only constructible by Secretary.
-    author_agent is written server-side; callers cannot spoof."""
+    """Append-only writes to user_facts.
+
+    Authorized authors:
+        - 'secretary' — Layer D write path from the agentic tool loop.
+        - 'human'     — Layer D write path from the control panel (sub-project 3).
+
+    ``add``, ``deactivate``, ``reactivate`` are available to both.
+    ``edit`` and ``delete`` are **human-only** — Secretary has no product
+    affordance for rewriting or hard-deleting her own past facts; her
+    correction path is ``deactivate`` + ``add``.
+
+    ``author_agent`` is written server-side; callers cannot spoof.
+    """
+
+    _AUTHORIZED_AUTHORS: frozenset[str] = frozenset({"secretary", "human"})
+    _HUMAN_ONLY_AUTHORS: frozenset[str] = frozenset({"human"})
 
     def __init__(self, agent_name: str, conn: sqlite3.Connection) -> None:
-        if agent_name != "secretary":
+        if agent_name not in self._AUTHORIZED_AUTHORS:
             raise PermissionError(
                 f"user_facts writer not allowed for agent={agent_name!r}; "
-                "only 'secretary' may write user facts in this sub-project"
+                f"authorized authors: {sorted(self._AUTHORIZED_AUTHORS)}"
             )
         self._agent = agent_name
         self._conn = conn
@@ -589,14 +603,42 @@ class UserFactsWriter:
         ts = _utc_now_iso()
         cur = self._conn.execute(
             "INSERT INTO user_facts (ts, author_agent, fact_text, topic, is_active) "
-            "VALUES (?, 'secretary', ?, ?, 1)",
-            (ts, fact_text, topic),
+            "VALUES (?, ?, ?, ?, 1)",
+            (ts, self._agent, fact_text, topic),
         )
         return int(cur.lastrowid or 0)
 
     def deactivate(self, fact_id: int) -> None:
         self._conn.execute(
             "UPDATE user_facts SET is_active=0 WHERE id=?",
+            (fact_id,),
+        )
+
+    def reactivate(self, fact_id: int) -> None:
+        self._conn.execute(
+            "UPDATE user_facts SET is_active=1 WHERE id=?",
+            (fact_id,),
+        )
+
+    def edit(
+        self, fact_id: int, fact_text: str, topic: str | None
+    ) -> None:
+        if self._agent not in self._HUMAN_ONLY_AUTHORS:
+            raise PermissionError(
+                f"user_facts edit is human-only; agent={self._agent!r} not permitted"
+            )
+        self._conn.execute(
+            "UPDATE user_facts SET fact_text=?, topic=? WHERE id=?",
+            (fact_text, topic, fact_id),
+        )
+
+    def delete(self, fact_id: int) -> None:
+        if self._agent not in self._HUMAN_ONLY_AUTHORS:
+            raise PermissionError(
+                f"user_facts hard delete is human-only; agent={self._agent!r} not permitted"
+            )
+        self._conn.execute(
+            "DELETE FROM user_facts WHERE id=?",
             (fact_id,),
         )
 
