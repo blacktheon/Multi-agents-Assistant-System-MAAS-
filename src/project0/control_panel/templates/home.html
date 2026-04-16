@@ -1,6 +1,36 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>MAAS Control Panel</h1>
-<p>Use the navigation above to edit settings or view token usage.</p>
-<p>MAAS is currently <strong>{{ maas_state }}</strong>.</p>
+<div class="home-grid">
+  <a href="/profile" class="home-card">
+    <div class="card-icon">👤</div>
+    <div class="card-title">User Profile</div>
+    <div class="card-desc">Layer A — address, preferences, notes</div>
+  </a>
+  <a href="/facts" class="home-card">
+    <div class="card-icon">🧠</div>
+    <div class="card-title">User Facts</div>
+    <div class="card-desc">Layer D — live CRUD, no restart needed</div>
+  </a>
+  <a href="/toml" class="home-card">
+    <div class="card-icon">⚙️</div>
+    <div class="card-title">TOML Config</div>
+    <div class="card-desc">Agent LLM settings and parameters</div>
+  </a>
+  <a href="/personas" class="home-card">
+    <div class="card-icon">🎭</div>
+    <div class="card-title">Personas</div>
+    <div class="card-desc">Agent personality and prompt files</div>
+  </a>
+  <a href="/env" class="home-card">
+    <div class="card-icon">🔑</div>
+    <div class="card-title">.env</div>
+    <div class="card-desc">API keys and environment variables</div>
+  </a>
+  <a href="/usage" class="home-card">
+    <div class="card-icon">📊</div>
+    <div class="card-title">Token Usage</div>
+    <div class="card-desc">Daily chart and per-agent breakdown</div>
+  </a>
+</div>
 {% endblock %}

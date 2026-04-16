@@ -4,6 +4,7 @@
 
 <h2>Daily (last 30 days)</h2>
 <div class="chart">{{ chart_svg | safe }}</div>
+<div class="table-wrapper">
 <table>
   <thead>
     <tr><th>Day</th><th>Calls</th><th>Input</th><th>Cache-create</th><th>Cache-read</th><th>Output</th></tr>
@@ -21,8 +22,10 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 
 <h2>Per agent × purpose (last 7 days)</h2>
+<div class="table-wrapper">
 <table>
   <thead>
     <tr><th>Agent</th><th>Purpose</th><th>Calls</th><th>Input (all)</th><th>Output</th></tr>
@@ -39,8 +42,10 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 
 <h2>Recent calls (last 50)</h2>
+<div class="table-wrapper">
 <table>
   <thead>
     <tr>
@@ -65,4 +70,5 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% endblock %}
