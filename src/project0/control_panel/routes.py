@@ -7,8 +7,10 @@ concern. Responses are always HTML pages or redirects — never JSON.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
+
+from project0.control_panel.writes import atomic_write_text
 
 router = APIRouter()
 
@@ -46,3 +48,21 @@ async def maas_stop(request: Request) -> RedirectResponse:
 async def maas_restart(request: Request) -> RedirectResponse:
     await request.app.state.supervisor.restart()
     return RedirectResponse(url="/", status_code=303)
+
+
+@router.get("/profile")
+async def profile_get(request: Request) -> object:
+    templates = request.app.state.templates
+    path = request.app.state.project_root / "data" / "user_profile.yaml"
+    content = path.read_text(encoding="utf-8") if path.exists() else ""
+    return templates.TemplateResponse(request, "profile.html", _ctx(request, content=content))
+
+
+@router.post("/profile")
+async def profile_post(
+    request: Request,
+    content: str = Form(...),
+) -> RedirectResponse:
+    path = request.app.state.project_root / "data" / "user_profile.yaml"
+    atomic_write_text(path, content)
+    return RedirectResponse(url="/profile", status_code=303)
