@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
+
+from project0.agents._tool_loop import TurnState
+from project0.envelope import Envelope
+from project0.llm.tools import ToolCall
+from project0.store import KnowledgeIndexStore, ReviewScheduleStore, Store
 
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
@@ -107,3 +113,171 @@ def test_learning_agent_builds_tool_specs() -> None:
         "process_link", "process_text", "list_upcoming_reviews",
         "mark_reviewed", "list_entries", "get_entry",
     }
+
+
+# --- fixtures for tool dispatch / handle routing tests -----------------------
+
+@pytest.fixture
+def store() -> Store:
+    s = Store(":memory:")
+    s.init_schema()
+    return s
+
+
+@pytest.fixture
+def knowledge_index(store: Store) -> KnowledgeIndexStore:
+    return KnowledgeIndexStore(store.conn)
+
+
+@pytest.fixture
+def review_schedule(store: Store) -> ReviewScheduleStore:
+    return ReviewScheduleStore(store.conn)
+
+
+def _make_agent(
+    knowledge_index: KnowledgeIndexStore,
+    review_schedule: ReviewScheduleStore,
+) -> "LearningAgent":  # type: ignore[name-defined]  # noqa: F821
+    from project0.agents.learning import LearningAgent, load_learning_config, load_learning_persona
+    persona = load_learning_persona(PROMPTS_DIR / "learning.md")
+    config = load_learning_config(PROMPTS_DIR / "learning.toml")
+    return LearningAgent(
+        llm=None,
+        notion=None,
+        knowledge_index=knowledge_index,
+        review_schedule=review_schedule,
+        messages_store=None,
+        persona=persona,
+        config=config,
+    )
+
+
+# --- tool dispatch tests -----------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_list_upcoming_reviews_tool(
+    knowledge_index: KnowledgeIndexStore,
+    review_schedule: ReviewScheduleStore,
+) -> None:
+    agent = _make_agent(knowledge_index, review_schedule)
+    knowledge_index.upsert(
+        notion_page_id="page-1", title="Test Entry", source_url=None,
+        source_type="text", tags=["python"], user_notes=None, status="active",
+        created_at="2026-04-16T10:00:00Z", last_edited="2026-04-16T10:00:00Z",
+    )
+    review_schedule.create("page-1", first_review_date="2026-04-17")
+
+    call = ToolCall(id="call-1", name="list_upcoming_reviews", input={"days_ahead": 365})
+    turn_state = TurnState()
+    content, is_err = await agent._dispatch_tool(call, turn_state)
+    assert not is_err
+    data = json.loads(content)
+    assert len(data) == 1
+    assert data[0]["page_id"] == "page-1"
+
+
+@pytest.mark.asyncio
+async def test_mark_reviewed_tool(
+    knowledge_index: KnowledgeIndexStore,
+    review_schedule: ReviewScheduleStore,
+) -> None:
+    agent = _make_agent(knowledge_index, review_schedule)
+    knowledge_index.upsert(
+        notion_page_id="page-1", title="Test Entry", source_url=None,
+        source_type="text", tags=[], user_notes=None, status="active",
+        created_at="2026-04-16T10:00:00Z", last_edited="2026-04-16T10:00:00Z",
+    )
+    review_schedule.create("page-1", first_review_date="2026-04-17")
+
+    call = ToolCall(id="call-1", name="mark_reviewed", input={"page_id": "page-1"})
+    turn_state = TurnState()
+    content, is_err = await agent._dispatch_tool(call, turn_state)
+    assert not is_err
+    data = json.loads(content)
+    assert data["marked"] == "page-1"
+
+
+@pytest.mark.asyncio
+async def test_list_entries_tool(
+    knowledge_index: KnowledgeIndexStore,
+    review_schedule: ReviewScheduleStore,
+) -> None:
+    agent = _make_agent(knowledge_index, review_schedule)
+    knowledge_index.upsert(
+        notion_page_id="page-1", title="Python GIL", source_url=None,
+        source_type="text", tags=["python"], user_notes=None, status="active",
+        created_at="2026-04-16T10:00:00Z", last_edited="2026-04-16T10:00:00Z",
+    )
+    knowledge_index.upsert(
+        notion_page_id="page-2", title="React Hooks", source_url=None,
+        source_type="text", tags=["react"], user_notes=None, status="active",
+        created_at="2026-04-16T11:00:00Z", last_edited="2026-04-16T11:00:00Z",
+    )
+
+    # No filter
+    call = ToolCall(id="call-1", name="list_entries", input={})
+    turn_state = TurnState()
+    content, is_err = await agent._dispatch_tool(call, turn_state)
+    assert not is_err
+    data = json.loads(content)
+    assert len(data) == 2
+
+    # Filter by tag
+    call = ToolCall(id="call-2", name="list_entries", input={"tag": "python"})
+    content, is_err = await agent._dispatch_tool(call, turn_state)
+    assert not is_err
+    data = json.loads(content)
+    assert len(data) == 1
+    assert data[0]["title"] == "Python GIL"
+
+
+@pytest.mark.asyncio
+async def test_unknown_tool_returns_error(
+    knowledge_index: KnowledgeIndexStore,
+    review_schedule: ReviewScheduleStore,
+) -> None:
+    agent = _make_agent(knowledge_index, review_schedule)
+    call = ToolCall(id="call-1", name="nonexistent_tool", input={})
+    turn_state = TurnState()
+    content, is_err = await agent._dispatch_tool(call, turn_state)
+    assert is_err
+    assert "unknown tool" in content
+
+
+# --- handle routing tests ----------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_handle_routing_pulse_notion_sync(
+    knowledge_index: KnowledgeIndexStore,
+    review_schedule: ReviewScheduleStore,
+) -> None:
+    """notion_sync pulse returns None (silent) when notion client is absent."""
+    agent = _make_agent(knowledge_index, review_schedule)
+    env = Envelope(
+        id=1, ts="2026-04-16T10:00:00Z", parent_id=None,
+        source="pulse", telegram_chat_id=None, telegram_msg_id=None,
+        received_by_bot=None, from_kind="system", from_agent=None,
+        to_agent="learning", body="notion_sync", mentions=[],
+        routing_reason="pulse",
+        payload={"pulse_name": "notion_sync"},
+    )
+    result = await agent.handle(env)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_handle_routing_unknown_reason(
+    knowledge_index: KnowledgeIndexStore,
+    review_schedule: ReviewScheduleStore,
+) -> None:
+    agent = _make_agent(knowledge_index, review_schedule)
+    env = Envelope(
+        id=1, ts="2026-04-16T10:00:00Z", parent_id=None,
+        source="telegram_group", telegram_chat_id=123, telegram_msg_id=1,
+        received_by_bot=None, from_kind="user", from_agent=None,
+        to_agent="learning", body="hello", mentions=[],
+        routing_reason="listener_observation",
+        payload=None,
+    )
+    result = await agent.handle(env)
+    assert result is None
