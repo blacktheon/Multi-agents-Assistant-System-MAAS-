@@ -144,10 +144,12 @@ Get the Tailscale app from the App Store or Google Play, log in with the same ac
 ### Step 7 — Start it up
 
 ```bash
-uv run python -m project0.main
+uv run python -m project0.control_panel
 ```
 
-You'll see startup logs like:
+This launches the **control panel** on `http://0.0.0.0:8090`. Open it in your browser (or from your phone via your Tailscale IP, e.g. `http://100.x.x.x:8090`), then click the green **▶ Start** button to launch MAAS.
+
+You'll see MAAS startup logs in the same terminal:
 
 ```
 secretary registered (model=claude-sonnet-4-6)
@@ -161,7 +163,9 @@ intelligence webapp task spawned: bound to 0.0.0.0:8080
 intelligence daily pulse spawned: 10:00 Asia/Shanghai
 ```
 
-Leave the process running. Talk to the bots from your phone's Telegram app.
+From the control panel you can stop, restart, edit agent configs, manage user facts, and monitor token usage — all without touching the terminal again. Ctrl+C stops both the panel and MAAS.
+
+> **Alternative:** You can still run MAAS directly with `uv run python -m project0.main` if you don't need the panel.
 
 ---
 
