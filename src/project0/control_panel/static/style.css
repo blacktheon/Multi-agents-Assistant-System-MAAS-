@@ -1,14 +1,272 @@
-body { font-family: system-ui, sans-serif; max-width: 960px; margin: 1em auto; padding: 0 1em; }
-.status-bar { padding: 0.5em; background: #f0f0f0; border: 1px solid #ccc; }
-.status-bar button { margin-left: 0.5em; }
-.main-nav { padding: 0.5em 0; border-bottom: 1px solid #ccc; }
-.main-nav a { margin-right: 1em; }
-.state-stopped { color: #888; }
-.state-starting, .state-stopping { color: #e68a00; }
-.state-running { color: #2d7; }
-.state-crashed { color: #c33; }
-textarea { width: 100%; min-height: 400px; font-family: monospace; font-size: 13px; }
-table { border-collapse: collapse; width: 100%; }
-table th, table td { border: 1px solid #ddd; padding: 4px 8px; text-align: left; font-size: 13px; }
-.flash { padding: 0.5em; background: #ffc; border: 1px solid #dd6; margin: 1em 0; }
+/* ── Reset & Base ───────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #f8f9fa;
+  --surface: #ffffff;
+  --border: #e0e0e0;
+  --border-light: #eee;
+  --text: #1a1a2e;
+  --text-muted: #6c757d;
+  --accent: #4361ee;
+  --accent-hover: #3a56d4;
+  --danger: #dc3545;
+  --success: #22b573;
+  --warning: #e68a00;
+  --radius: 8px;
+  --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+  --shadow-md: 0 4px 6px rgba(0,0,0,0.07), 0 2px 4px rgba(0,0,0,0.06);
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 0 1.5em 3em;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+}
+
+/* ── Status Bar ────────────────────────────────────────────── */
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 1em;
+  padding: 0.75em 1.25em;
+  margin: 1em 0 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  flex-wrap: wrap;
+}
+
+.status-bar strong {
+  font-size: 1.05em;
+  letter-spacing: -0.01em;
+}
+
+.status-bar form { display: inline; }
+
+.status-bar button {
+  padding: 0.35em 1em;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 0.85em;
+  font-weight: 500;
+  transition: all 0.15s ease;
+}
+
+.status-bar button:hover:not(:disabled) {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+.status-bar button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.state { font-weight: 600; }
+.state-stopped { color: var(--text-muted); }
+.state-starting, .state-stopping { color: var(--warning); }
+.state-running { color: var(--success); }
+.state-crashed { color: var(--danger); }
+
+/* ── Navigation ────────────────────────────────────────────── */
+.main-nav {
+  display: flex;
+  gap: 0.25em;
+  padding: 0.75em 0;
+  margin-bottom: 1.5em;
+  border-bottom: 2px solid var(--border);
+}
+
+.main-nav a {
+  padding: 0.4em 0.9em;
+  text-decoration: none;
+  color: var(--text-muted);
+  font-weight: 500;
+  font-size: 0.9em;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+}
+
+.main-nav a:hover {
+  background: var(--accent);
+  color: white;
+}
+
+/* ── Content ───────────────────────────────────────────────── */
+main {
+  background: var(--surface);
+  padding: 1.5em 2em;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+
+h1 {
+  font-size: 1.5em;
+  font-weight: 700;
+  margin-bottom: 0.5em;
+  letter-spacing: -0.02em;
+}
+
+h2 {
+  font-size: 1.15em;
+  font-weight: 600;
+  margin: 1.5em 0 0.75em;
+  padding-bottom: 0.4em;
+  border-bottom: 1px solid var(--border-light);
+  letter-spacing: -0.01em;
+}
+
+p { margin-bottom: 0.75em; }
+
+code {
+  background: #f0f1f3;
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-size: 0.88em;
+}
+
+/* ── Forms & Inputs ────────────────────────────────────────── */
+textarea {
+  width: 100%;
+  min-height: 400px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 1em;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #fafbfc;
+  resize: vertical;
+  transition: border-color 0.15s ease;
+}
+
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(67, 97, 238, 0.12);
+}
+
+input[type="text"] {
+  padding: 0.4em 0.6em;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.9em;
+  transition: border-color 0.15s ease;
+}
+
+input[type="text"]:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(67, 97, 238, 0.12);
+}
+
+button, .btn {
+  padding: 0.5em 1.2em;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: white;
+  font-weight: 500;
+  font-size: 0.88em;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+button:hover { background: var(--accent-hover); }
+
+button:active { transform: scale(0.97); }
+
+label {
+  font-weight: 500;
+  font-size: 0.9em;
+  color: var(--text);
+}
+
+/* ── Tables ────────────────────────────────────────────────── */
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.88em;
+  margin: 0.5em 0 1em;
+}
+
+table thead {
+  background: #f5f6f8;
+}
+
+table th {
+  padding: 0.6em 0.8em;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  border-bottom: 2px solid var(--border);
+}
+
+table td {
+  padding: 0.55em 0.8em;
+  border-bottom: 1px solid var(--border-light);
+  vertical-align: middle;
+}
+
+table tbody tr:hover {
+  background: #f8f9fb;
+}
+
+table td button {
+  padding: 0.25em 0.6em;
+  font-size: 0.82em;
+  background: #eee;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+table td button:hover {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+/* ── Flash messages ────────────────────────────────────────── */
+.flash {
+  padding: 0.75em 1em;
+  background: #fff8e1;
+  border: 1px solid #ffe082;
+  border-radius: var(--radius);
+  margin: 1em 0;
+  font-size: 0.9em;
+}
+
+/* ── Chart container ───────────────────────────────────────── */
+.chart {
+  margin: 1em 0;
+  padding: 0.5em;
+  background: #fafbfc;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+}
+
+/* ── Inline forms ──────────────────────────────────────────── */
 form.inline { display: inline; }
+
+/* ── Lists ─────────────────────────────────────────────────── */
+ul { padding-left: 1.5em; margin: 0.5em 0; }
+li { margin: 0.4em 0; }
+li a {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 500;
+}
+li a:hover { text-decoration: underline; }
