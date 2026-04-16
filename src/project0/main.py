@@ -347,11 +347,52 @@ async def _run(settings: Settings) -> None:
         len(intelligence_watchlist),
     )
 
+    # --- Learning agent -------------------------------------------------------
+    from project0.agents.learning import (
+        LearningAgent,
+        load_learning_config,
+        load_learning_persona,
+    )
+    from project0.agents.registry import register_learning
+    from project0.notion.client import NotionClient
+
+    learning_persona = load_learning_persona(Path("prompts/learning.md"))
+    learning_cfg = load_learning_config(Path("prompts/learning.toml"))
+
+    notion_client = NotionClient(
+        token=settings.notion_token,
+        database_id=settings.notion_database_id,
+    )
+
+    learning_facts_reader = UserFactsReader("learning", store.conn)
+
+    learning = LearningAgent(
+        llm=llm,
+        notion=notion_client,
+        knowledge_index=store.knowledge_index(),
+        review_schedule=store.review_schedule(),
+        messages_store=store.messages(),
+        persona=learning_persona,
+        config=learning_cfg,
+        user_tz=settings.user_tz,
+        user_profile=user_profile,
+        user_facts_reader=learning_facts_reader,
+    )
+    register_learning(learning.handle)
+    log.info("learning registered (model=%s)", learning_cfg.model)
+
     # Pulse scheduler entries for Manager.
     pulse_entries = load_pulse_entries(Path("prompts/manager.toml"))
     log.info(
         "manager pulse entries: %s",
         [(e.name, e.every_seconds) for e in pulse_entries],
+    )
+
+    # Pulse scheduler entries for Learning.
+    learning_pulse_entries = load_pulse_entries(Path("prompts/learning.toml"))
+    log.info(
+        "learning pulse entries: %s",
+        [(e.name, e.every_seconds) for e in learning_pulse_entries],
     )
 
     # Sanity-check that every registered agent has a token.
@@ -411,6 +452,16 @@ async def _run(settings: Settings) -> None:
                 run_pulse_loop(
                     entry=entry,
                     target_agent="manager",
+                    orchestrator=orch,
+                )
+            )
+            log.info("pulse task spawned: %s", entry.name)
+
+        for entry in learning_pulse_entries:
+            tg.create_task(
+                run_pulse_loop(
+                    entry=entry,
+                    target_agent="learning",
                     orchestrator=orch,
                 )
             )

@@ -56,6 +56,7 @@ AGENT_SPECS: dict[str, AgentSpec] = {
     "secretary": AgentSpec(
         name="secretary", token_env_key="TELEGRAM_BOT_TOKEN_SECRETARY"
     ),
+    "learning": AgentSpec(name="learning", token_env_key="TELEGRAM_BOT_TOKEN_LEARNING"),
 }
 
 
@@ -111,3 +112,20 @@ def register_intelligence(handle: AgentOptionalFn) -> None:
         return result
 
     AGENT_REGISTRY["intelligence"] = agent_adapter
+
+
+def register_learning(handle: AgentOptionalFn) -> None:
+    """Install Learning's ``handle`` into AGENT_REGISTRY + PULSE_REGISTRY."""
+
+    async def agent_adapter(env: Envelope) -> AgentResult:
+        result = await handle(env)
+        if result is None:
+            return AgentResult(
+                reply_text="（书瑶暂时不在呢...）",
+                delegate_to=None,
+                handoff_text=None,
+            )
+        return result
+
+    AGENT_REGISTRY["learning"] = agent_adapter
+    PULSE_REGISTRY["learning"] = handle

@@ -11,6 +11,7 @@ ENV_MIN: dict[str, str] = {
     "TELEGRAM_BOT_TOKEN_MANAGER": "t1",
     "TELEGRAM_BOT_TOKEN_SECRETARY": "t2",
     "TELEGRAM_BOT_TOKEN_INTELLIGENCE": "t3",
+    "TELEGRAM_BOT_TOKEN_LEARNING": "t4",
     "TELEGRAM_ALLOWED_CHAT_IDS": "-100123",
     "TELEGRAM_ALLOWED_USER_IDS": "42",
     "ANTHROPIC_API_KEY": "sk-ant-test",
@@ -19,6 +20,8 @@ ENV_MIN: dict[str, str] = {
     "GOOGLE_CALENDAR_ID": "primary",
     "MANAGER_PULSE_CHAT_ID": "-100123",
     "TWITTERAPI_IO_API_KEY": "x",
+    "NOTION_TOKEN": "notion-test-token",
+    "NOTION_DATABASE_ID": "notion-test-db-id",
 }
 
 

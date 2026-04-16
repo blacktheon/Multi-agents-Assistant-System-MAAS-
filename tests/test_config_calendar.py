@@ -16,10 +16,13 @@ def base_env(monkeypatch, tmp_path):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN_MANAGER", "t1")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN_INTELLIGENCE", "t2")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN_SECRETARY", "t3")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN_LEARNING", "t4")
     monkeypatch.setenv("TELEGRAM_ALLOWED_CHAT_IDS", "1")
     monkeypatch.setenv("TELEGRAM_ALLOWED_USER_IDS", "2")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-foo")
     monkeypatch.setenv("STORE_PATH", str(tmp_path / "store.db"))
+    monkeypatch.setenv("NOTION_TOKEN", "notion-test-token")
+    monkeypatch.setenv("NOTION_DATABASE_ID", "notion-test-db-id")
     return monkeypatch
 
 

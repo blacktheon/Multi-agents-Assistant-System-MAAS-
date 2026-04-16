@@ -26,12 +26,15 @@ def _full_env() -> dict[str, str]:
         "TELEGRAM_BOT_TOKEN_MANAGER": "m-token",
         "TELEGRAM_BOT_TOKEN_INTELLIGENCE": "i-token",
         "TELEGRAM_BOT_TOKEN_SECRETARY": "s-token",
+        "TELEGRAM_BOT_TOKEN_LEARNING": "l-token",
         "TELEGRAM_ALLOWED_CHAT_IDS": "-100123,-100456",
         "TELEGRAM_ALLOWED_USER_IDS": "42",
         "ANTHROPIC_API_KEY": "sk-ant-xxx",
         "STORE_PATH": "data/store.db",
         "LOG_LEVEL": "INFO",
         "USER_TIMEZONE": "UTC",
+        "NOTION_TOKEN": "notion-test-token",
+        "NOTION_DATABASE_ID": "notion-test-db-id",
     }
 
 
@@ -44,6 +47,7 @@ def test_load_settings_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
         "manager": "m-token",
         "intelligence": "i-token",
         "secretary": "s-token",
+        "learning": "l-token",
     }
     assert s.allowed_chat_ids == frozenset({-100123, -100456})
     assert s.allowed_user_ids == frozenset({42})
@@ -58,9 +62,12 @@ def test_load_settings_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
         "TELEGRAM_BOT_TOKEN_MANAGER",
         "TELEGRAM_BOT_TOKEN_INTELLIGENCE",
         "TELEGRAM_BOT_TOKEN_SECRETARY",
+        "TELEGRAM_BOT_TOKEN_LEARNING",
         "TELEGRAM_ALLOWED_CHAT_IDS",
         "TELEGRAM_ALLOWED_USER_IDS",
         "ANTHROPIC_API_KEY",
+        "NOTION_TOKEN",
+        "NOTION_DATABASE_ID",
     ],
 )
 def test_load_settings_missing_required_raises(

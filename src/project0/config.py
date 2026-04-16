@@ -30,6 +30,8 @@ class Settings:
     google_calendar_id: str
     google_token_path: Path
     google_client_secrets_path: Path
+    notion_token: str
+    notion_database_id: str
     anthropic_cache_ttl: Literal["ephemeral", "1h"] = "ephemeral"
 
 
@@ -106,6 +108,14 @@ def load_settings() -> Settings:
         os.environ.get("GOOGLE_CLIENT_SECRETS_PATH", "").strip() or "data/google_client_secrets.json"
     )
 
+    notion_token = os.environ.get("NOTION_TOKEN", "").strip()
+    if not notion_token:
+        raise RuntimeError("NOTION_TOKEN is required but was empty or unset")
+
+    notion_database_id = os.environ.get("NOTION_DATABASE_ID", "").strip()
+    if not notion_database_id:
+        raise RuntimeError("NOTION_DATABASE_ID is required but was empty or unset")
+
     return Settings(
         bot_tokens=bot_tokens,
         allowed_chat_ids=allowed_chat_ids,
@@ -117,5 +127,7 @@ def load_settings() -> Settings:
         google_calendar_id=google_calendar_id,
         google_token_path=google_token_path,
         google_client_secrets_path=google_client_secrets_path,
+        notion_token=notion_token,
+        notion_database_id=notion_database_id,
         anthropic_cache_ttl=raw_ttl,  # type: ignore[arg-type]
     )
