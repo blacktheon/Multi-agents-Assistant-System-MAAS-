@@ -205,8 +205,8 @@ class Orchestrator:
         """
         assert pulse_env.source == "pulse"
         assert pulse_env.routing_reason == "pulse"
-        assert pulse_env.to_agent == "manager", (
-            f"pulse target must be 'manager' in 6c; got {pulse_env.to_agent!r}"
+        assert pulse_env.to_agent in PULSE_REGISTRY, (
+            f"pulse target {pulse_env.to_agent!r} not in PULSE_REGISTRY"
         )
 
         async with self.store.lock:
