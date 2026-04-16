@@ -96,6 +96,29 @@ CREATE TABLE IF NOT EXISTS user_facts (
     is_active     INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS ix_user_facts_active ON user_facts(is_active, ts);
+
+CREATE TABLE IF NOT EXISTS knowledge_index (
+    notion_page_id  TEXT PRIMARY KEY,
+    title           TEXT NOT NULL,
+    source_url      TEXT,
+    source_type     TEXT NOT NULL,
+    tags            TEXT,
+    user_notes      TEXT,
+    status          TEXT NOT NULL DEFAULT 'active',
+    created_at      TEXT NOT NULL,
+    last_edited     TEXT NOT NULL,
+    last_synced     TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS review_schedule (
+    notion_page_id  TEXT PRIMARY KEY REFERENCES knowledge_index(notion_page_id),
+    interval_step   INTEGER NOT NULL DEFAULT 0,
+    next_review     TEXT NOT NULL,
+    last_reviewed   TEXT,
+    times_reviewed  INTEGER NOT NULL DEFAULT 0,
+    is_active       INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS ix_review_schedule_next ON review_schedule(next_review);
 """
 
 
@@ -170,6 +193,12 @@ class Store:
 
     def llm_usage(self) -> LLMUsageStore:
         return LLMUsageStore(self._conn)
+
+    def knowledge_index(self) -> KnowledgeIndexStore:
+        return KnowledgeIndexStore(self._conn)
+
+    def review_schedule(self) -> ReviewScheduleStore:
+        return ReviewScheduleStore(self._conn)
 
 
 class AgentMemory:
@@ -796,3 +825,152 @@ class UserProfile:
         if self.out_of_band_notes:
             lines.append(f"- 备注: {self.out_of_band_notes.strip()}")
         return "\n".join(lines)
+
+
+class KnowledgeIndexStore:
+    """Read/write access to the knowledge_index table."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def upsert(
+        self,
+        *,
+        notion_page_id: str,
+        title: str,
+        source_url: str | None,
+        source_type: str,
+        tags: list[str],
+        user_notes: str | None,
+        status: str,
+        created_at: str,
+        last_edited: str,
+    ) -> None:
+        tags_json = json.dumps(tags, ensure_ascii=False)
+        now = _utc_now_iso()
+        self._conn.execute(
+            """
+            INSERT INTO knowledge_index
+                (notion_page_id, title, source_url, source_type, tags,
+                 user_notes, status, created_at, last_edited, last_synced)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (notion_page_id)
+            DO UPDATE SET
+                title = excluded.title,
+                source_url = excluded.source_url,
+                source_type = excluded.source_type,
+                tags = excluded.tags,
+                user_notes = excluded.user_notes,
+                status = excluded.status,
+                last_edited = excluded.last_edited,
+                last_synced = excluded.last_synced
+            """,
+            (notion_page_id, title, source_url, source_type, tags_json,
+             user_notes, status, created_at, last_edited, now),
+        )
+
+    def get(self, notion_page_id: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            "SELECT * FROM knowledge_index WHERE notion_page_id = ?",
+            (notion_page_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_dict(row)
+
+    def list_active(self) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM knowledge_index WHERE status = 'active' "
+            "ORDER BY created_at DESC"
+        ).fetchall()
+        return [self._row_to_dict(r) for r in rows]
+
+    def last_sync_timestamp(self) -> str | None:
+        row = self._conn.execute(
+            "SELECT MAX(last_synced) AS max_ts FROM knowledge_index"
+        ).fetchone()
+        if row is None:
+            return None
+        return row["max_ts"]
+
+    def _row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
+        d = dict(row)
+        d["tags"] = json.loads(d["tags"]) if d["tags"] else []
+        return d
+
+
+_REVIEW_INTERVALS_DAYS = [1, 3, 7, 14, 30]
+
+
+class ReviewScheduleStore:
+    """Read/write access to the review_schedule table."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def create(self, notion_page_id: str, first_review_date: str) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO review_schedule
+                (notion_page_id, interval_step, next_review, last_reviewed,
+                 times_reviewed, is_active)
+            VALUES (?, 0, ?, NULL, 0, 1)
+            """,
+            (notion_page_id, first_review_date),
+        )
+
+    def due_items(self, as_of_date: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT r.*, k.title, k.source_url, k.tags
+            FROM review_schedule r
+            JOIN knowledge_index k ON r.notion_page_id = k.notion_page_id
+            WHERE r.next_review <= ? AND r.is_active = 1
+            ORDER BY r.next_review ASC
+            """,
+            (as_of_date,),
+        ).fetchall()
+        result = []
+        for row in rows:
+            d = dict(row)
+            d["tags"] = json.loads(d["tags"]) if d["tags"] else []
+            result.append(d)
+        return result
+
+    def mark_reviewed(
+        self, notion_page_id: str, reviewed_date: str
+    ) -> None:
+        row = self._conn.execute(
+            "SELECT interval_step FROM review_schedule WHERE notion_page_id = ?",
+            (notion_page_id,),
+        ).fetchone()
+        if row is None:
+            return
+        current_step = int(row["interval_step"])
+        new_step = min(current_step + 1, len(_REVIEW_INTERVALS_DAYS) - 1)
+        interval_days = _REVIEW_INTERVALS_DAYS[new_step]
+        from datetime import date, timedelta
+        next_date = date.fromisoformat(reviewed_date) + timedelta(days=interval_days)
+        self._conn.execute(
+            """
+            UPDATE review_schedule
+            SET interval_step = ?,
+                next_review = ?,
+                last_reviewed = ?,
+                times_reviewed = times_reviewed + 1
+            WHERE notion_page_id = ?
+            """,
+            (new_step, next_date.isoformat(), reviewed_date, notion_page_id),
+        )
+
+    def set_active(self, notion_page_id: str, is_active: bool) -> None:
+        self._conn.execute(
+            "UPDATE review_schedule SET is_active = ? WHERE notion_page_id = ?",
+            (1 if is_active else 0, notion_page_id),
+        )
+
+    def remove(self, notion_page_id: str) -> None:
+        self._conn.execute(
+            "DELETE FROM review_schedule WHERE notion_page_id = ?",
+            (notion_page_id,),
+        )
