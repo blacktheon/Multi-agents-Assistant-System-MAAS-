@@ -2,7 +2,7 @@
 
 **A personal assistant that isn't one agent — it's a small team.** Three specialists live inside Telegram as three separate bots, each with their own character, memory, and skills. They coordinate with each other, handle your calendar, brief you on tech news every morning, and reply in the same chat you already use to talk to friends.
 
-Built as a single Python process. One user. Speaks Chinese.
+Built with Python 3.12, FastAPI, SQLite (WAL mode), and Claude (Anthropic API). Ships with a WebUI control panel for managing settings, editing agent personas, and monitoring token usage from your phone. Single user. Speaks Chinese.
 
 ---
 
@@ -360,7 +360,7 @@ intel bot    ┘                  ↓             ↓       Intelligence (LLM + 
                                 └── PULSE_REGISTRY ──── pulse scheduler (asyncio)
 ```
 
-- Single Python process, single `asyncio` event loop, single SQLite database
+- Single Python process, single `asyncio` event loop, single SQLite database (WAL mode for multi-process access with the control panel)
 - Each Telegram bot is its own polling task inside the event loop
 - The orchestrator is ~200 lines of plain async Python — no framework, no LangGraph
 - Agents are classes that expose a `handle(envelope) -> AgentResult` method; a shared tool-use loop (`agents/_tool_loop.py`) drives Manager's and Intelligence's agentic calls
@@ -386,7 +386,7 @@ Intelligence's data lives outside SQLite:
 ## Running the tests
 
 ```bash
-uv run pytest -q                 # 340+ tests, all hermetic
+uv run pytest -q                 # 490+ tests, all hermetic
 uv run mypy src/project0
 uv run ruff check src tests
 ```
@@ -439,6 +439,16 @@ src/project0/
 │   ├── rendering.py           # Jinja2 filters + context builder
 │   ├── templates/             # base.html, report.html, history.html, empty.html, not_found.html
 │   └── static/                # style.css + thumbs.js
+├── control_panel/             # WebUI control panel (sub-project 3)
+│   ├── __main__.py            # entry point: uv run python -m project0.control_panel
+│   ├── app.py                 # FastAPI factory with lifespan (stops MAAS on exit)
+│   ├── supervisor.py          # MAASSupervisor state machine (spawn/stop/restart)
+│   ├── routes.py              # all HTTP routes (home, profile, facts, toml, personas, env, usage)
+│   ├── paths.py               # allowlisted TOML/persona file resolution
+│   ├── writes.py              # atomic_write_text helper
+│   ├── rendering.py           # Jinja2 setup + SVG bar chart renderer
+│   ├── templates/             # base.html + page templates
+│   └── static/                # style.css (mobile-responsive)
 └── calendar/
     ├── auth.py                # OAuth installed-app flow
     ├── client.py              # async wrapper around google-api-python-client
@@ -474,6 +484,7 @@ The spec + plan cycle for each sub-project lives in `docs/superpowers/`. Read in
 - `specs/2026-04-14-manager-agent-and-pulse-design.md` — Manager's tool-use loop and the pulse primitive
 - `specs/2026-04-15-intelligence-agent-design.md` — Intelligence's generation pipeline, watchlist, Q&A tool surface
 - `specs/2026-04-15-intelligence-delivery-surface-design.md` — webapp, feedback capture, `get_report_link` tool, extended thinking
+- `specs/2026-04-16-control-panel-design.md` — WebUI control panel: supervisor state machine, file editors, facts CRUD, token usage
 
 Implementation plans matching each spec live under `plans/`.
 
@@ -488,15 +499,14 @@ Sub-projects completed (in order):
 - **6d Intelligence (core)** — Twitter ingestion, deterministic daily report pipeline, Q&A tool-use loop
 - **6e Intelligence delivery surface** — FastAPI webapp, thumbs feedback, `get_report_link` tool, extended thinking on the summarizer, daily pulse auto-generation
 - **Memory hardening + token cost cut** — Layer A user profile (YAML), narrow Layer D slice (Secretary-written user facts via `remember_about_user` tool), `llm_usage` instrumentation on every LLM call, two-breakpoint cache layout (`SystemBlocks`), Manager transcript shrink (20→10), Intelligence Q&A slim + on-demand `get_report_item` tool, env-toggled 1-hour cache TTL
+- **WebUI control panel** — standalone FastAPI app supervising MAAS as a child process. Textarea editing for user profile, agent TOML configs, persona markdown, and `.env`. Full CRUD on `user_facts` (live via SQLite WAL). Token usage page with SVG bar chart and rollup tables. Mobile-responsive. Tailscale-gated, no auth.
 
 Next up:
 
-- **WebUI token monitor + control panel** — first read of `llm_usage` instrumentation; cross-agent envelope trace viewer; config editor; approval flows. The Intelligence webapp is a narrow read-only subset.
+- **Learning agent** — formal knowledge base writer (Layer D in the master spec)
+- **Supervisor agent** — audit + evaluation authority; built on derived views of the `messages` table
 
 Further out (in rough master-spec order):
 
-- **WebUI control panel** — full cross-agent envelope trace viewer, config editor, approval flows (the Intelligence webapp is a narrow read-only subset)
-- **Learning agent** — formal knowledge base writer (Layer D in the master spec)
-- **Supervisor agent** — audit + evaluation authority; built on derived views of the `messages` table
 - **Tool gateway** — shared external-data infrastructure for Twitter, WeChat, web search
-- **Multi-process safety + Postgres migration** — when the WebUI lands and concurrent writers become real
+- **Cross-agent envelope trace viewer** — visual inspection of the audit log through the control panel
