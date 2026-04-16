@@ -36,13 +36,11 @@ SpawnFn = Callable[[], Awaitable[_Proc]]
 async def _real_spawn() -> _Proc:
     """Default spawn_fn: launch MAAS via `uv run python -m project0.main`.
 
-    stdout and stderr go to DEVNULL per spec decision — the panel has no
-    log view; server-side debug uses the terminal that launched the panel.
+    stdout and stderr are inherited from the panel process so MAAS logs
+    appear in the same terminal that launched the panel.
     """
     proc = await asyncio.create_subprocess_exec(
         "uv", "run", "python", "-m", "project0.main",
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
     )
     return proc
 
