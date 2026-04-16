@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-ALLOWED_AGENT_NAMES: tuple[str, ...] = ("manager", "secretary", "intelligence")
+ALLOWED_AGENT_NAMES: tuple[str, ...] = ("manager", "secretary", "intelligence", "learning")
 
 
 def toml_path(name: str, *, project_root: Path) -> Path:

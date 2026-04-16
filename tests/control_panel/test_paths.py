@@ -16,7 +16,7 @@ from project0.control_panel.paths import (
 
 
 def test_allowed_names_are_fixed() -> None:
-    assert ALLOWED_AGENT_NAMES == ("manager", "secretary", "intelligence")
+    assert ALLOWED_AGENT_NAMES == ("manager", "secretary", "intelligence", "learning")
 
 
 def test_toml_path_resolves_known_name(tmp_path: Path) -> None:
