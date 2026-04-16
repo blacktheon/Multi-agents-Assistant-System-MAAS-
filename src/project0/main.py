@@ -44,6 +44,18 @@ from project0.telegram_io import (
 log = logging.getLogger("project0")
 
 
+def _install_sigterm_handler() -> None:
+    """Translate SIGTERM to KeyboardInterrupt so ``asyncio.run`` exits via
+    the existing clean-shutdown path. Used when MAAS runs as a child of the
+    control panel, which sends SIGTERM on Stop."""
+    import signal
+
+    def _handler(signum: int, frame: object) -> None:  # noqa: ARG001
+        raise KeyboardInterrupt()
+
+    signal.signal(signal.SIGTERM, _handler)
+
+
 def _setup_logging(level: str) -> None:
     logging.basicConfig(
         level=getattr(logging, level.upper(), logging.INFO),
@@ -433,6 +445,7 @@ async def _run(settings: Settings) -> None:
 def main() -> None:
     settings = load_settings()
     _setup_logging(settings.log_level)
+    _install_sigterm_handler()
     try:
         asyncio.run(_run(settings))
     except KeyboardInterrupt:
