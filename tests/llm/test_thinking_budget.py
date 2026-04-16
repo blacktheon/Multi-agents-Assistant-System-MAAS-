@@ -85,7 +85,7 @@ async def test_anthropic_provider_passes_thinking_to_sdk() -> None:
     )
 
     kwargs = stream_fn.call_args.kwargs
-    assert kwargs.get("thinking") == {"type": "adaptive", "budget_tokens": 16384}
+    assert kwargs.get("thinking") == {"type": "enabled", "budget_tokens": 16384}
 
 
 async def test_anthropic_provider_omits_thinking_when_none() -> None:
