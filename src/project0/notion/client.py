@@ -28,7 +28,10 @@ class NotionClient:
         self._database_id = database_id
         if _client is ...:
             from notion_client import AsyncClient
-            self._client = AsyncClient(auth=token)
+            self._client = AsyncClient(
+                auth=token,
+                notion_version="2022-06-28",
+            )
         else:
             self._client = _client
 
