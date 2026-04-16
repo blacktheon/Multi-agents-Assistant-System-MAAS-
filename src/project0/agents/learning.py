@@ -7,6 +7,7 @@ the user sends (links or raw text).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import tomllib
@@ -165,8 +166,8 @@ def load_learning_config(path: Path) -> LearningConfig:
 _PROCESS_LINK_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "url":        {"type": "string", "description": "The URL to fetch and summarize."},
-        "user_notes": {"type": "string", "description": "Optional notes from the user about this link."},
+        "url": {"type": "string", "description": "The URL to fetch and summarize."},
+        "user_notes": {"type": "string", "description": "Optional user notes about this link."},
     },
     "required": ["url"],
 }
@@ -231,7 +232,7 @@ class LearningAgent:
         messages_store: MessagesStore | None,
         persona: LearningPersona,
         config: LearningConfig,
-        user_tz: ZoneInfo = ZoneInfo("UTC"),
+        user_tz: ZoneInfo | None = None,
         clock: Callable[[], datetime] | None = None,
         user_profile: UserProfile | None = None,
         user_facts_reader: UserFactsReader | None = None,
@@ -243,7 +244,7 @@ class LearningAgent:
         self._messages = messages_store
         self._persona = persona
         self._config = config
-        self._user_tz = user_tz
+        self._user_tz = user_tz or ZoneInfo("UTC")
         self._clock = clock
         self._user_profile = user_profile
         self._user_facts_reader = user_facts_reader
@@ -508,7 +509,7 @@ class LearningAgent:
         if text.startswith("```"):
             # Remove opening and closing fences
             lines = text.splitlines()
-            lines = [l for l in lines if not l.strip().startswith("```")]
+            lines = [ln for ln in lines if not ln.strip().startswith("```")]
             text = "\n".join(lines)
         return json.loads(text)
 
@@ -646,11 +647,10 @@ class LearningAgent:
             return None
 
         last_ts = self._knowledge_index.last_sync_timestamp()
-        if last_ts:
-            since = datetime.fromisoformat(last_ts)
-        else:
-            # First sync: pull everything
-            since = datetime(2000, 1, 1, tzinfo=UTC)
+        since = (
+            datetime.fromisoformat(last_ts) if last_ts
+            else datetime(2000, 1, 1, tzinfo=UTC)
+        )
 
         entries = await self._notion.query_changed_since(since)
         for entry in entries:
@@ -659,11 +659,8 @@ class LearningAgent:
             if entry.status == "active":
                 existing = self._knowledge_index.get(entry.page_id)
                 if existing and self._review_schedule is not None:
-                    # Only create schedule if one doesn't already exist
-                    try:
+                    with contextlib.suppress(Exception):
                         self._schedule_review(entry.page_id)
-                    except Exception:
-                        pass  # Already scheduled
 
         log.info("learning: notion_sync processed %d entries", len(entries))
         return None

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from project0.notion.model import KnowledgeEntry, NotionClientError
@@ -128,7 +128,7 @@ class NotionClient:
     ) -> list[KnowledgeEntry]:
         """Query database for pages edited after ``since``. Lightweight:
         returns properties only (body=None)."""
-        since_iso = since.astimezone(timezone.utc).isoformat()
+        since_iso = since.astimezone(UTC).isoformat()
         filter_payload = {
             "timestamp": "last_edited_time",
             "last_edited_time": {"after": since_iso},
@@ -234,7 +234,7 @@ def _extract_url(props: dict[str, Any], key: str) -> str | None:
 
 def _parse_iso(s: str | None) -> datetime:
     if not s:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
     return datetime.fromisoformat(s)
 
 
