@@ -115,6 +115,11 @@ class Store:
         )
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
+        # WAL mode enables concurrent readers + one writer across processes,
+        # required so the control panel (separate process) can read llm_usage
+        # and write user_facts concurrently with a running MAAS process.
+        self._conn.execute("PRAGMA journal_mode = WAL")
+        self._conn.execute("PRAGMA synchronous = NORMAL")
         self._lock = asyncio.Lock()
 
     @property
