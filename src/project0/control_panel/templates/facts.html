@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>User Facts (Layer D)</h1>
+<p>
+  {% if show_inactive %}
+    Showing all facts including inactive. <a href="/facts">Hide inactive</a>
+  {% else %}
+    Showing active facts only. <a href="/facts?show_inactive=1">Show inactive</a>
+  {% endif %}
+</p>
+
+<h2>Add fact</h2>
+<form method="post" action="/facts">
+  <p><label>Fact text: <input type="text" name="fact_text" required style="width:60%"></label></p>
+  <p><label>Topic (optional): <input type="text" name="topic"></label></p>
+  <p><button type="submit">Add</button></p>
+</form>
+
+<h2>Existing facts</h2>
+<table>
+  <thead>
+    <tr><th>id</th><th>ts</th><th>author</th><th>fact</th><th>topic</th><th>active</th><th>actions</th></tr>
+  </thead>
+  <tbody>
+    {% for f in facts %}
+    <tr>
+      <td>{{ f.id }}</td>
+      <td>{{ f.ts }}</td>
+      <td>{{ f.author_agent }}</td>
+      <td>
+        <form method="post" action="/facts/{{ f.id }}/edit" class="inline">
+          <input type="text" name="fact_text" value="{{ f.fact_text }}" style="width:40ch">
+          <input type="text" name="topic" value="{{ f.topic or '' }}" style="width:12ch">
+          <button type="submit">Save</button>
+        </form>
+      </td>
+      <td>{{ f.topic or '' }}</td>
+      <td>{{ '✓' if f.is_active else '✗' }}</td>
+      <td>
+        {% if f.is_active %}
+          <form method="post" action="/facts/{{ f.id }}/deactivate" class="inline"><button>Deactivate</button></form>
+        {% else %}
+          <form method="post" action="/facts/{{ f.id }}/reactivate" class="inline"><button>Reactivate</button></form>
+        {% endif %}
+        <form method="post" action="/facts/{{ f.id }}/delete" class="inline"
+              onsubmit="return confirm('Hard delete fact {{ f.id }}? This cannot be undone.');">
+          <button>Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

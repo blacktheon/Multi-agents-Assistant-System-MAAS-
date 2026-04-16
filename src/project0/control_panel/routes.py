@@ -11,6 +11,7 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
 
 from project0.control_panel.writes import atomic_write_text
+from project0.store import UserFactsReader, UserFactsWriter
 
 router = APIRouter()
 
@@ -66,3 +67,70 @@ async def profile_post(
     path = request.app.state.project_root / "data" / "user_profile.yaml"
     atomic_write_text(path, content)
     return RedirectResponse(url="/profile", status_code=303)
+
+
+@router.get("/facts")
+async def facts_list(
+    request: Request,
+    show_inactive: int = 0,
+) -> object:
+    templates = request.app.state.templates
+    store = request.app.state.store
+    reader = UserFactsReader("human", store.conn)
+    if show_inactive:
+        facts = reader.all_including_inactive()
+    else:
+        facts = reader.active(limit=500)
+    return templates.TemplateResponse(
+        request, "facts.html",
+        _ctx(request, facts=facts, show_inactive=bool(show_inactive)),
+    )
+
+
+@router.post("/facts")
+async def facts_add(
+    request: Request,
+    fact_text: str = Form(...),
+    topic: str = Form(""),
+) -> RedirectResponse:
+    store = request.app.state.store
+    writer = UserFactsWriter("human", store.conn)
+    writer.add(fact_text, topic=topic or None)
+    return RedirectResponse(url="/facts", status_code=303)
+
+
+@router.post("/facts/{fact_id}/edit")
+async def facts_edit(
+    request: Request,
+    fact_id: int,
+    fact_text: str = Form(...),
+    topic: str = Form(""),
+) -> RedirectResponse:
+    store = request.app.state.store
+    writer = UserFactsWriter("human", store.conn)
+    writer.edit(fact_id, fact_text, topic or None)
+    return RedirectResponse(url="/facts", status_code=303)
+
+
+@router.post("/facts/{fact_id}/deactivate")
+async def facts_deactivate(request: Request, fact_id: int) -> RedirectResponse:
+    store = request.app.state.store
+    writer = UserFactsWriter("human", store.conn)
+    writer.deactivate(fact_id)
+    return RedirectResponse(url="/facts", status_code=303)
+
+
+@router.post("/facts/{fact_id}/reactivate")
+async def facts_reactivate(request: Request, fact_id: int) -> RedirectResponse:
+    store = request.app.state.store
+    writer = UserFactsWriter("human", store.conn)
+    writer.reactivate(fact_id)
+    return RedirectResponse(url="/facts?show_inactive=1", status_code=303)
+
+
+@router.post("/facts/{fact_id}/delete")
+async def facts_delete(request: Request, fact_id: int) -> RedirectResponse:
+    store = request.app.state.store
+    writer = UserFactsWriter("human", store.conn)
+    writer.delete(fact_id)
+    return RedirectResponse(url="/facts", status_code=303)
