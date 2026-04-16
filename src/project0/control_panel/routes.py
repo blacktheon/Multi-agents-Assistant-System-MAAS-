@@ -203,3 +203,21 @@ async def personas_edit_post(
         raise HTTPException(status_code=404, detail=str(e)) from e
     atomic_write_text(path, content)
     return RedirectResponse(url=f"/personas/{name}", status_code=303)
+
+
+@router.get("/env")
+async def env_get(request: Request) -> object:
+    templates = request.app.state.templates
+    path = request.app.state.project_root / ".env"
+    content = path.read_text(encoding="utf-8") if path.exists() else ""
+    return templates.TemplateResponse(request, "env.html", _ctx(request, content=content))
+
+
+@router.post("/env")
+async def env_post(
+    request: Request,
+    content: str = Form(...),
+) -> RedirectResponse:
+    path = request.app.state.project_root / ".env"
+    atomic_write_text(path, content)
+    return RedirectResponse(url="/env", status_code=303)
