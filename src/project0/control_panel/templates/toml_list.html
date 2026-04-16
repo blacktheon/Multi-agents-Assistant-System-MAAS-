@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>TOML config files</h1>
+<ul>
+  {% for n in names %}
+  <li><a href="/toml/{{ n }}">prompts/{{ n }}.toml</a></li>
+  {% endfor %}
+</ul>
+<p><strong>Restart MAAS after saving any change.</strong></p>
+{% endblock %}

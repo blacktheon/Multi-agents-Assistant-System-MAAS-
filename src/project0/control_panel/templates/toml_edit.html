@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>prompts/{{ name }}.toml</h1>
+<p><a href="/toml">← back to list</a></p>
+<form method="post" action="/toml/{{ name }}">
+  <textarea name="content">{{ content }}</textarea>
+  <p><button type="submit">Save</button></p>
+</form>
+<p><strong>Restart MAAS to apply.</strong></p>
+{% endblock %}

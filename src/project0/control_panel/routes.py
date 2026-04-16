@@ -7,9 +7,10 @@ concern. Responses are always HTML pages or redirects — never JSON.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
+from project0.control_panel.paths import ALLOWED_AGENT_NAMES, toml_path
 from project0.control_panel.writes import atomic_write_text
 from project0.store import UserFactsReader, UserFactsWriter
 
@@ -134,3 +135,38 @@ async def facts_delete(request: Request, fact_id: int) -> RedirectResponse:
     writer = UserFactsWriter("human", store.conn)
     writer.delete(fact_id)
     return RedirectResponse(url="/facts", status_code=303)
+
+
+@router.get("/toml")
+async def toml_list(request: Request) -> object:
+    templates = request.app.state.templates
+    return templates.TemplateResponse(
+        request, "toml_list.html",
+        _ctx(request, names=ALLOWED_AGENT_NAMES),
+    )
+
+
+@router.get("/toml/{name}")
+async def toml_edit_get(request: Request, name: str) -> object:
+    templates = request.app.state.templates
+    try:
+        path = toml_path(name, project_root=request.app.state.project_root)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    content = path.read_text(encoding="utf-8") if path.exists() else ""
+    return templates.TemplateResponse(
+        request, "toml_edit.html",
+        _ctx(request, name=name, content=content),
+    )
+
+
+@router.post("/toml/{name}")
+async def toml_edit_post(
+    request: Request, name: str, content: str = Form(...),
+) -> RedirectResponse:
+    try:
+        path = toml_path(name, project_root=request.app.state.project_root)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    atomic_write_text(path, content)
+    return RedirectResponse(url=f"/toml/{name}", status_code=303)
