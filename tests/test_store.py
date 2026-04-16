@@ -614,3 +614,66 @@ class TestUserFactsWriterExtended:
         w_s = UserFactsWriter("secretary", s.conn)
         with pytest.raises(PermissionError):
             w_s.delete(fid)
+
+
+class TestLLMUsageRollups:
+    """Read APIs used by the control panel /usage page.
+
+    Spec: docs/superpowers/specs/2026-04-16-control-panel-design.md §6.
+    """
+
+    def _seed(self, tmp_path: Path) -> Store:
+        s = Store(tmp_path / "s.db")
+        s.init_schema()
+        rows = [
+            ("2026-04-14T10:00:00Z", "secretary", "claude-sonnet-4-6", 100, 0, 0, 50, None, "listener"),
+            ("2026-04-15T10:00:00Z", "secretary", "claude-sonnet-4-6", 200, 0, 80, 60, 1, "reply"),
+            ("2026-04-15T11:00:00Z", "manager",   "claude-sonnet-4-6", 300, 0, 90, 70, 2, "tool_loop"),
+        ]
+        for r in rows:
+            s.conn.execute(
+                "INSERT INTO llm_usage "
+                "(ts, agent, model, input_tokens, cache_creation_input_tokens, "
+                " cache_read_input_tokens, output_tokens, envelope_id, purpose) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                r,
+            )
+        return s
+
+    def test_daily_rollup_groups_by_day_desc(self, tmp_path: Path) -> None:
+        s = self._seed(tmp_path)
+        rows = s.llm_usage().daily_rollup(days=30)
+        assert len(rows) == 2
+        assert rows[0]["day"] == "2026-04-15"
+        assert rows[0]["calls"] == 2
+        assert rows[0]["in_tok"] == 500
+        assert rows[0]["cr_tok"] == 170
+        assert rows[0]["out_tok"] == 130
+        assert rows[1]["day"] == "2026-04-14"
+        assert rows[1]["calls"] == 1
+
+    def test_agent_rollup_groups_by_agent_and_purpose(self, tmp_path: Path) -> None:
+        s = self._seed(tmp_path)
+        rows = s.llm_usage().agent_rollup(days=365)
+        keys = {(r["agent"], r["purpose"]) for r in rows}
+        assert keys == {
+            ("secretary", "listener"),
+            ("secretary", "reply"),
+            ("manager", "tool_loop"),
+        }
+        assert rows[0]["agent"] == "manager"
+        assert rows[0]["in_total"] == 390
+        assert rows[0]["out_total"] == 70
+
+    def test_recent_returns_newest_first_with_limit(self, tmp_path: Path) -> None:
+        s = self._seed(tmp_path)
+        rows = s.llm_usage().recent(limit=2)
+        assert len(rows) == 2
+        assert rows[0]["agent"] == "manager"
+        assert rows[1]["agent"] == "secretary"
+        assert rows[0]["envelope_id"] == 2
+        assert set(rows[0].keys()) >= {
+            "id", "ts", "agent", "purpose", "model",
+            "input_tokens", "cache_creation_input_tokens",
+            "cache_read_input_tokens", "output_tokens", "envelope_id",
+        }

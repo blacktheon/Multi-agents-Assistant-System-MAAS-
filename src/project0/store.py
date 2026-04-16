@@ -497,6 +497,86 @@ class LLMUsageStore:
             for r in rows
         ]
 
+    def daily_rollup(self, days: int) -> list[dict[str, Any]]:
+        """Per-day rollup for the last ``days`` days, newest first."""
+        rows = self._conn.execute(
+            "SELECT substr(ts, 1, 10)                 AS day, "
+            "       SUM(input_tokens)                 AS in_tok, "
+            "       SUM(cache_creation_input_tokens)  AS cc_tok, "
+            "       SUM(cache_read_input_tokens)      AS cr_tok, "
+            "       SUM(output_tokens)                AS out_tok, "
+            "       COUNT(*)                          AS calls "
+            "FROM llm_usage "
+            "WHERE ts >= date('now', ?) "
+            "GROUP BY day "
+            "ORDER BY day DESC",
+            (f"-{int(days)} days",),
+        ).fetchall()
+        return [
+            {
+                "day": str(r["day"]),
+                "in_tok": int(r["in_tok"] or 0),
+                "cc_tok": int(r["cc_tok"] or 0),
+                "cr_tok": int(r["cr_tok"] or 0),
+                "out_tok": int(r["out_tok"] or 0),
+                "calls": int(r["calls"] or 0),
+            }
+            for r in rows
+        ]
+
+    def agent_rollup(self, days: int) -> list[dict[str, Any]]:
+        """Per-(agent, purpose) rollup, ordered by total input tokens desc."""
+        rows = self._conn.execute(
+            "SELECT agent, purpose, "
+            "       SUM(input_tokens + cache_creation_input_tokens + cache_read_input_tokens) AS in_total, "
+            "       SUM(output_tokens) AS out_total, "
+            "       COUNT(*)           AS calls "
+            "FROM llm_usage "
+            "WHERE ts >= datetime('now', ?) "
+            "GROUP BY agent, purpose "
+            "ORDER BY in_total DESC",
+            (f"-{int(days)} days",),
+        ).fetchall()
+        return [
+            {
+                "agent": str(r["agent"]),
+                "purpose": str(r["purpose"]),
+                "in_total": int(r["in_total"] or 0),
+                "out_total": int(r["out_total"] or 0),
+                "calls": int(r["calls"] or 0),
+            }
+            for r in rows
+        ]
+
+    def recent(self, limit: int) -> list[dict[str, Any]]:
+        """Last ``limit`` rows, newest first."""
+        rows = self._conn.execute(
+            "SELECT id, ts, agent, purpose, model, "
+            "       input_tokens, cache_creation_input_tokens, "
+            "       cache_read_input_tokens, output_tokens, envelope_id "
+            "FROM llm_usage "
+            "ORDER BY id DESC "
+            "LIMIT ?",
+            (int(limit),),
+        ).fetchall()
+        return [
+            {
+                "id": int(r["id"]),
+                "ts": str(r["ts"]),
+                "agent": str(r["agent"]),
+                "purpose": str(r["purpose"]),
+                "model": str(r["model"]),
+                "input_tokens": int(r["input_tokens"] or 0),
+                "cache_creation_input_tokens": int(r["cache_creation_input_tokens"] or 0),
+                "cache_read_input_tokens": int(r["cache_read_input_tokens"] or 0),
+                "output_tokens": int(r["output_tokens"] or 0),
+                "envelope_id": (
+                    int(r["envelope_id"]) if r["envelope_id"] is not None else None
+                ),
+            }
+            for r in rows
+        ]
+
 
 @dataclass(frozen=True)
 class UserFact:
