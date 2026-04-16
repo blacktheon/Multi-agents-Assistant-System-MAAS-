@@ -1,0 +1,14 @@
+body { font-family: system-ui, sans-serif; max-width: 960px; margin: 1em auto; padding: 0 1em; }
+.status-bar { padding: 0.5em; background: #f0f0f0; border: 1px solid #ccc; }
+.status-bar button { margin-left: 0.5em; }
+.main-nav { padding: 0.5em 0; border-bottom: 1px solid #ccc; }
+.main-nav a { margin-right: 1em; }
+.state-stopped { color: #888; }
+.state-starting, .state-stopping { color: #e68a00; }
+.state-running { color: #2d7; }
+.state-crashed { color: #c33; }
+textarea { width: 100%; min-height: 400px; font-family: monospace; font-size: 13px; }
+table { border-collapse: collapse; width: 100%; }
+table th, table td { border: 1px solid #ddd; padding: 4px 8px; text-align: left; font-size: 13px; }
+.flash { padding: 0.5em; background: #ffc; border: 1px solid #dd6; margin: 1em 0; }
+form.inline { display: inline; }

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MAAS Control Panel</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="status-bar">
+    <strong>MAAS Control</strong>
+    Status: <span class="state state-{{ maas_state }}">● {{ maas_state }}</span>
+    {% if maas_pid is not none %}(PID {{ maas_pid }}){% endif %}
+    {% if maas_last_exit_code is not none and maas_state == "crashed" %}
+      (last exit: {{ maas_last_exit_code }})
+    {% endif %}
+    <form method="post" action="/maas/start" style="display:inline">
+      <button type="submit" {% if maas_state in ("starting","running","stopping") %}disabled{% endif %}>Start</button>
+    </form>
+    <form method="post" action="/maas/stop" style="display:inline">
+      <button type="submit" {% if maas_state != "running" %}disabled{% endif %}>Stop</button>
+    </form>
+    <form method="post" action="/maas/restart" style="display:inline">
+      <button type="submit" {% if maas_state != "running" %}disabled{% endif %}>Restart</button>
+    </form>
+  </header>
+  <nav class="main-nav">
+    <a href="/">Home</a>
+    <a href="/profile">Profile</a>
+    <a href="/facts">Facts</a>
+    <a href="/toml">TOML</a>
+    <a href="/personas">Personas</a>
+    <a href="/env">.env</a>
+    <a href="/usage">Token Usage</a>
+  </nav>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>
