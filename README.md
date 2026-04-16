@@ -207,6 +207,52 @@ Tap any URL Intelligence sends you. You'll see:
 
 ---
 
+## Control panel (WebUI)
+
+A separate web surface for editing every human-tweakable setting and
+starting/stopping MAAS without touching a terminal. Runs as its own
+process and supervises MAAS as a child.
+
+### Starting the panel
+
+```bash
+uv run python -m project0.control_panel
+```
+
+Panel binds to `0.0.0.0:8090`. Same Tailscale deployment story as the
+Intelligence webapp — reach it from your phone via your Tailnet IP.
+
+### What it does
+
+- **Start / Stop / Restart MAAS** — the panel spawns MAAS as a child
+  process; MAAS's lifecycle is in the panel's hands while the panel is
+  running.
+- **Edit `data/user_profile.yaml`**, **`prompts/*.toml`**,
+  **`prompts/*.md`**, and **`.env`** — plain textarea, Save, then click
+  Restart on the header to apply.
+- **Full CRUD on `user_facts`** — add, edit, deactivate/reactivate, and
+  hard delete individual facts. Changes are live (shared SQLite in WAL
+  mode); no restart required.
+- **Token usage page** — daily SVG bar chart + rollup tables for the
+  last 30 days, last 7 days by agent × purpose, and the last 50 calls.
+
+### Caveat: panel crash with MAAS still running
+
+If the panel process itself dies while MAAS is still running, the panel
+on next start sees `stopped` because state is in-memory. If you then
+click Start, a second MAAS spawns and fights the first one for Telegram
+long-polling. **If the panel says `stopped` but the bots are still
+responding in Telegram, SSH in and `pkill -f project0.main` before
+clicking Start again.** A PID-file reattach mechanism is a deferred
+future improvement.
+
+### No authentication
+
+The panel has no login, no token, no CSRF. Tailscale is the gate. Do
+not expose port 8090 outside your Tailnet.
+
+---
+
 ## Configuration reference
 
 All the env vars:
