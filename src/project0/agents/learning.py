@@ -661,12 +661,45 @@ class LearningAgent:
         entries = await self._notion.query_changed_since(since)
         for entry in entries:
             self._index_entry(entry)
-            # Ensure review schedule exists for active entries
             if entry.status == "active":
                 existing = self._knowledge_index.get(entry.page_id)
                 if existing and self._review_schedule is not None:
                     with contextlib.suppress(Exception):
                         self._schedule_review(entry.page_id)
+
+        # Detect deletions: pages that exist locally but are gone from Notion.
+        # query_changed_since only returns pages that still exist, so deleted
+        # pages silently disappear. We do a full query_all and compare.
+        try:
+            all_notion = await self._notion.query_all(limit=200)
+        except NotionClientError as e:
+            log.warning("learning: notion_sync full query failed: %s", e)
+            all_notion = None
+
+        if all_notion is not None:
+            notion_ids = {e.page_id for e in all_notion}
+            local_active = self._knowledge_index.list_active()
+            for local in local_active:
+                if local["notion_page_id"] not in notion_ids:
+                    self._knowledge_index.upsert(
+                        notion_page_id=local["notion_page_id"],
+                        title=local["title"],
+                        source_url=local.get("source_url"),
+                        source_type=local["source_type"],
+                        tags=local.get("tags", []),
+                        user_notes=local.get("user_notes"),
+                        status="deleted",
+                        created_at=local["created_at"],
+                        last_edited=local["last_edited"],
+                    )
+                    if self._review_schedule is not None:
+                        self._review_schedule.set_active(
+                            local["notion_page_id"], False
+                        )
+                    log.info(
+                        "learning: notion_sync deactivated deleted entry: %s",
+                        local["title"],
+                    )
 
         log.info("learning: notion_sync processed %d entries", len(entries))
         return None
