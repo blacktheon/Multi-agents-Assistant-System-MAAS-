@@ -108,9 +108,9 @@ def load_settings() -> Settings:
         os.environ.get("GOOGLE_CLIENT_SECRETS_PATH", "").strip() or "data/google_client_secrets.json"
     )
 
-    notion_token = os.environ.get("NOTION_TOKEN", "").strip()
+    notion_token = os.environ.get("NOTION_INTERNAL_INTEGRATION_SECRET", "").strip()
     if not notion_token:
-        raise RuntimeError("NOTION_TOKEN is required but was empty or unset")
+        raise RuntimeError("NOTION_INTERNAL_INTEGRATION_SECRET is required but was empty or unset")
 
     notion_database_id = os.environ.get("NOTION_DATABASE_ID", "").strip()
     if not notion_database_id:

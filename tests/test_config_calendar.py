@@ -21,7 +21,7 @@ def base_env(monkeypatch, tmp_path):
     monkeypatch.setenv("TELEGRAM_ALLOWED_USER_IDS", "2")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-foo")
     monkeypatch.setenv("STORE_PATH", str(tmp_path / "store.db"))
-    monkeypatch.setenv("NOTION_TOKEN", "notion-test-token")
+    monkeypatch.setenv("NOTION_INTERNAL_INTEGRATION_SECRET", "notion-test-token")
     monkeypatch.setenv("NOTION_DATABASE_ID", "notion-test-db-id")
     return monkeypatch
 

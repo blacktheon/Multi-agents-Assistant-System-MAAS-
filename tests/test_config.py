@@ -33,7 +33,7 @@ def _full_env() -> dict[str, str]:
         "STORE_PATH": "data/store.db",
         "LOG_LEVEL": "INFO",
         "USER_TIMEZONE": "UTC",
-        "NOTION_TOKEN": "notion-test-token",
+        "NOTION_INTERNAL_INTEGRATION_SECRET": "notion-test-token",
         "NOTION_DATABASE_ID": "notion-test-db-id",
     }
 
@@ -66,7 +66,7 @@ def test_load_settings_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
         "TELEGRAM_ALLOWED_CHAT_IDS",
         "TELEGRAM_ALLOWED_USER_IDS",
         "ANTHROPIC_API_KEY",
-        "NOTION_TOKEN",
+        "NOTION_INTERNAL_INTEGRATION_SECRET",
         "NOTION_DATABASE_ID",
     ],
 )

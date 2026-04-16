@@ -20,7 +20,7 @@ ENV_MIN: dict[str, str] = {
     "GOOGLE_CALENDAR_ID": "primary",
     "MANAGER_PULSE_CHAT_ID": "-100123",
     "TWITTERAPI_IO_API_KEY": "x",
-    "NOTION_TOKEN": "notion-test-token",
+    "NOTION_INTERNAL_INTEGRATION_SECRET": "notion-test-token",
     "NOTION_DATABASE_ID": "notion-test-db-id",
 }
 
