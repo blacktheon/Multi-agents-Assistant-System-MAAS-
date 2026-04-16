@@ -144,16 +144,21 @@ class NotionClient:
         filter_payload: dict[str, Any] | None = None,
         page_size: int = 100,
     ) -> list[KnowledgeEntry]:
-        """Internal: paginated database query."""
+        """Internal: paginated database query.
+
+        notion-client v3 moved database querying to ``data_sources.query``.
+        The database_id works as a data_source_id.
+        """
         entries: list[KnowledgeEntry] = []
         kwargs: dict[str, Any] = {
-            "database_id": self._database_id,
             "page_size": page_size,
         }
         if filter_payload:
             kwargs["filter"] = filter_payload
         try:
-            resp = await self._client.databases.query(**kwargs)
+            resp = await self._client.data_sources.query(
+                self._database_id, **kwargs
+            )
         except Exception as e:
             raise NotionClientError(f"query_database failed: {e}") from e
 
