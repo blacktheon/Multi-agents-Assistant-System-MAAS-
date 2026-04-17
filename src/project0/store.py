@@ -1108,7 +1108,7 @@ class SupervisorReviewsStore:
         return self._row(row)
 
     def recent_for_agent(
-        self, agent: str, limit: int = 10
+        self, agent: str, limit: int = 30
     ) -> list[SupervisorReviewRow]:
         """Return the most recent ``limit`` reviews for ``agent``, newest-first."""
         rows = self._conn.execute(
@@ -1123,7 +1123,7 @@ class SupervisorReviewsStore:
         return [self._row(r) for r in rows]
 
     def history_spark(
-        self, *, agent: str, limit: int = 20
+        self, agent: str, *, limit: int = 20
     ) -> list[tuple[str, int]]:
         """Return ``(ts, score_overall)`` pairs for ``agent``, oldest-first.
 
@@ -1142,7 +1142,7 @@ class SupervisorReviewsStore:
         ).fetchall()
         return [(str(r["ts"]), int(r["score_overall"])) for r in rows]
 
-    def all_recent(self, limit: int = 50) -> list[SupervisorReviewRow]:
+    def all_recent(self, limit: int = 90) -> list[SupervisorReviewRow]:
         """Return the most recent ``limit`` reviews across all agents, newest-first."""
         rows = self._conn.execute(
             """
