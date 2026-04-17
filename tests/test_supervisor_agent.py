@@ -1012,6 +1012,100 @@ def test_run_review_now_rejects_secretary(tmp_path) -> None:
     assert "Secretary" in captured["content"]
 
 
+def test_run_review_now_reports_parse_failure(tmp_path) -> None:
+    """If the review LLM returns malformed JSON, run_review_now must
+    surface a 'review_failed' message, not a misleading 'no_new_envelopes'."""
+    from project0.agents.supervisor import (
+        Supervisor, SupervisorConfig, SupervisorPersona,
+    )
+    from project0.store import Store
+    from project0.llm.tools import ToolCall, ToolUseResult
+
+    store = Store(str(tmp_path / "store.db"))
+    store.init_schema()
+
+    # Seed manager envelopes so the slice is NOT empty.
+    _insert_user_envelope_at(
+        store, chat_id=100, body="hello", msg_id=1,
+        when=datetime.now(UTC) - timedelta(hours=2),
+    )
+
+    persona = SupervisorPersona(
+        core="CORE", dm_mode="DM", pulse_mode="PULSE", tool_use_guide="TOOLS",
+    )
+    cfg = SupervisorConfig(
+        model="fake", max_tokens_reply=1024, max_tool_iterations=6,
+        transcript_window=10,
+        quiet_threshold_seconds=300, max_wait_seconds=3600, per_tick_limit=200,
+    )
+
+    captured = {}
+
+    class _ScriptedLLM:
+        def __init__(self):
+            self.n = 0
+
+        async def complete(self, **kw):
+            # ReviewEngine will call this and get back garbage.
+            return "this is not json at all, it's just prose"
+
+        async def complete_with_tools(self, *, system, messages, tools,
+                                      max_tokens, agent, purpose, envelope_id=None):
+            self.n += 1
+            if self.n == 1:
+                return ToolUseResult(
+                    kind="tool_use",
+                    text=None,
+                    tool_calls=[ToolCall(id="c1", name="run_review_now",
+                                         input={"agent": "manager"})],
+                )
+            for m in messages:
+                if hasattr(m, "tool_use_id") and getattr(m, "tool_use_id", None) == "c1":
+                    captured["content"] = m.content
+                    captured["is_error"] = getattr(m, "is_error", None)
+            return ToolUseResult(kind="text", text="sorry, failed", tool_calls=[])
+
+    llm = _ScriptedLLM()
+    sup = Supervisor(llm=llm, store=store, persona=persona, config=cfg)
+
+    dm_env = Envelope(
+        id=None, ts="2026-04-18T03:20:00Z", parent_id=None,
+        source="telegram_dm", telegram_chat_id=42, telegram_msg_id=99,
+        received_by_bot="supervisor",
+        from_kind="user", from_agent=None, to_agent="supervisor",
+        body="帮我跑一次 manager 的评价",
+        routing_reason="direct_dm",
+    )
+    asyncio.run(sup.handle(dm_env))
+
+    body = captured["content"]
+    assert "review_failed" in body
+    assert captured["is_error"] is True
+
+
+def test_review_parse_tolerates_trailing_prose(tmp_path) -> None:
+    """A valid review JSON followed by trailing prose should still parse."""
+    from project0.agents.supervisor import ReviewEngine
+
+    # Pretend the model produced valid JSON + a trailing sentence.
+    raw = json.dumps({
+        "agent": "manager",
+        "envelope_id_from": 1,
+        "envelope_id_to": 2,
+        "envelope_count": 2,
+        "score_helpfulness": 80,
+        "score_correctness": 80,
+        "score_tone": 80,
+        "score_efficiency": 80,
+        "critique_text": "good.",
+        "recommendations": [],
+    }, ensure_ascii=False) + "\n\nHope this is useful for you!"
+
+    obj = ReviewEngine._parse_and_validate(raw, agent="manager")
+    assert obj is not None
+    assert obj["score_helpfulness"] == 80
+
+
 # --- registry wiring --------------------------------------------------------
 
 

@@ -17,7 +17,7 @@ import tomllib
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from project0.agents._tool_loop import run_agentic_loop, TurnState
 from project0.envelope import AgentResult, Envelope
@@ -152,6 +152,14 @@ REVIEWED_AGENTS: tuple[str, ...] = ("manager", "intelligence", "learning")
 
 
 # --- idle gate --------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ReviewOutcome:
+    """Result of trying to run one review. status disambiguates the None-row
+    cases that the tool dispatcher needs to report differently."""
+    status: Literal["persisted", "empty_slice", "parse_failed"]
+    row: SupervisorReviewRow | None
+
 
 @dataclass(frozen=True)
 class GateResult:
@@ -347,11 +355,18 @@ class ReviewEngine:
         text = raw.strip()
         if text.startswith("```"):
             lines = [ln for ln in text.splitlines() if not ln.strip().startswith("```")]
-            text = "\n".join(lines)
+            text = "\n".join(lines).strip()
+
+        # Find the first '{' and use raw_decode so trailing prose after the
+        # JSON object (a common model habit) does not break the parse.
+        start = text.find("{")
+        if start == -1:
+            log.warning("review: no JSON object found: %s", text[:200])
+            return None
         try:
-            obj = json.loads(text)
+            obj, _end = json.JSONDecoder().raw_decode(text[start:])
         except json.JSONDecodeError:
-            log.warning("review: non-JSON output rejected: %s", text[:200])
+            log.warning("review: could not parse JSON: %s", text[:500])
             return None
 
         required = {
@@ -524,28 +539,51 @@ class Supervisor:
                     return "不能评审 Secretary — 她不在我的视野里。", True
                 if agent not in REVIEWED_AGENTS:
                     return f"unknown agent: {agent!r}", True
-                row = await self._run_review_for_agent(agent, trigger="on_demand")
-                if row is None:
+                outcome = await self._run_review_for_agent(
+                    agent, trigger="on_demand"
+                )
+                if outcome.status == "empty_slice":
                     return json.dumps({
                         "agent": agent,
                         "status": "no_new_envelopes",
                         "message": f"{agent} 最近没有新对话, 没什么可评的。",
                     }, ensure_ascii=False), False
-                return self._format_review_row(row), False
+                if outcome.status == "parse_failed":
+                    return json.dumps({
+                        "agent": agent,
+                        "status": "review_failed",
+                        "message": (
+                            f"{agent} 的 review LLM 输出没法解析。"
+                            " 我试过了, 但 JSON 不合法。让欧尼酱知道: 这次评审失败了,"
+                            " 不是因为她没动静。"
+                        ),
+                    }, ensure_ascii=False), True
+                # persisted
+                assert outcome.row is not None
+                return self._format_review_row(outcome.row), False
 
             if name == "run_review_all":
                 results = []
                 for agent in REVIEWED_AGENTS:
-                    row = await self._run_review_for_agent(
+                    outcome = await self._run_review_for_agent(
                         agent, trigger="on_demand"
                     )
-                    if row is None:
+                    if outcome.status == "empty_slice":
                         results.append({
                             "agent": agent,
                             "status": "no_new_envelopes",
                         })
+                    elif outcome.status == "parse_failed":
+                        results.append({
+                            "agent": agent,
+                            "status": "review_failed",
+                            "message": "LLM 输出无法解析, 这次评审失败了。",
+                        })
                     else:
-                        results.append(json.loads(self._format_review_row(row)))
+                        assert outcome.row is not None
+                        results.append(json.loads(
+                            self._format_review_row(outcome.row)
+                        ))
                 return json.dumps(results, ensure_ascii=False), False
 
             if name == "list_past_reviews":
@@ -637,7 +675,7 @@ class Supervisor:
 
     async def _run_review_for_agent(
         self, agent: str, *, trigger: str
-    ) -> SupervisorReviewRow | None:
+    ) -> ReviewOutcome:
         cursor = int(self._memory.get(f"cursor:{agent}") or 0)
         envs = self._messages.envelopes_for_review(
             agent=agent,
@@ -645,7 +683,7 @@ class Supervisor:
             limit=self._config.per_tick_limit,
         )
         if not envs:
-            return None
+            return ReviewOutcome(status="empty_slice", row=None)
 
         review = await self._engine.run_review(
             agent=agent,
@@ -658,7 +696,7 @@ class Supervisor:
                 "supervisor: review returned None for agent=%s; cursor unchanged",
                 agent,
             )
-            return None
+            return ReviewOutcome(status="parse_failed", row=None)
 
         row = SupervisorReviewRow(
             id=0,
@@ -679,9 +717,8 @@ class Supervisor:
         async with self._store.lock:
             self._reviews.insert(row)
             self._memory.set(f"cursor:{agent}", review.envelope_id_to)
-        # Fetch back via store to get the real id populated (insert may have
-        # returned existing id on exact-match idempotency).
-        return self._reviews.latest_for_agent(agent)
+        persisted = self._reviews.latest_for_agent(agent)
+        return ReviewOutcome(status="persisted", row=persisted)
 
     # --- chat path (DM + group mention) -------------------------------------
 
