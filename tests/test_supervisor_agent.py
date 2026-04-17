@@ -530,7 +530,55 @@ def test_dm_path_returns_reply_using_dm_persona_section(tmp_path) -> None:
     call_system = fake_llm.calls[0]["system"]
     assert "DM_MODE_SECTION" in call_system
     assert "PULSE_MODE_SECTION" not in call_system
-    assert fake_llm.calls[0]["purpose"] == "dm_reply"
+    assert fake_llm.calls[0]["purpose"] == "chat_reply"
+
+
+def test_mention_in_group_routes_to_chat_path(tmp_path) -> None:
+    """Group @mention must use the chat path, not the None fallback."""
+    from project0.agents.supervisor import (
+        Supervisor, SupervisorConfig, SupervisorPersona,
+    )
+    from project0.store import Store
+
+    store = Store(str(tmp_path / "store.db"))
+    store.init_schema()
+
+    persona = SupervisorPersona(
+        core="CORE",
+        dm_mode="DM_MODE_SECTION",
+        pulse_mode="PULSE_MODE_SECTION",
+        tool_use_guide="TOOLS",
+    )
+    cfg = SupervisorConfig(
+        model="fake", max_tokens_reply=1024, max_tool_iterations=6,
+        transcript_window=10,
+        quiet_threshold_seconds=300, max_wait_seconds=3600, per_tick_limit=200,
+    )
+    fake_llm = _FakeLLM(next_response="欧尼酱,我在呢~")
+
+    sup = Supervisor(
+        llm=fake_llm, store=store, persona=persona, config=cfg,
+    )
+
+    mention_env = Envelope(
+        id=None, ts="2026-04-18T02:19:00Z", parent_id=None,
+        source="telegram_group", telegram_chat_id=-100, telegram_msg_id=42,
+        received_by_bot="supervisor",
+        from_kind="user", from_agent=None, to_agent="supervisor",
+        body="@MAAS_supervisor_bot 她们什么都不愿意给我呜呜呜",
+        mentions=["supervisor"],
+        routing_reason="mention",
+    )
+    result = asyncio.run(sup.handle(mention_env))
+    assert result is not None
+    assert result.reply_text is not None
+    assert "欧尼酱" in result.reply_text
+    # Same voice as DM — uses dm_mode section.
+    assert fake_llm.calls is not None
+    call_system = fake_llm.calls[0]["system"]
+    assert "DM_MODE_SECTION" in call_system
+    assert "PULSE_MODE_SECTION" not in call_system
+    assert fake_llm.calls[0]["purpose"] == "chat_reply"
 
 
 def test_pulse_path_uses_pulse_mode_not_dm_mode(tmp_path) -> None:

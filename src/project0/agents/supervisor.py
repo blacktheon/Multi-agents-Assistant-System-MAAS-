@@ -440,8 +440,8 @@ class Supervisor:
     async def handle(self, env: Envelope) -> AgentResult | None:
         if env.routing_reason == "pulse":
             return await self._handle_pulse(env)
-        if env.routing_reason == "direct_dm":
-            return await self._handle_dm(env)
+        if env.routing_reason in ("direct_dm", "mention"):
+            return await self._handle_chat(env)
         log.debug("supervisor: ignoring routing_reason=%s", env.routing_reason)
         return None
 
@@ -524,9 +524,9 @@ class Supervisor:
             self._reviews.insert(row)
             self._memory.set(f"cursor:{agent}", review.envelope_id_to)
 
-    # --- DM path ------------------------------------------------------------
+    # --- chat path (DM + group mention) -------------------------------------
 
-    async def _handle_dm(self, env: Envelope) -> AgentResult | None:
+    async def _handle_chat(self, env: Envelope) -> AgentResult | None:
         system = self._persona.core + "\n\n" + self._persona.dm_mode
         try:
             raw = await self._llm.complete(
@@ -534,11 +534,11 @@ class Supervisor:
                 messages=[Msg(role="user", content=env.body)],
                 max_tokens=self._config.max_tokens_reply,
                 agent="supervisor",
-                purpose="dm_reply",
+                purpose="chat_reply",
                 envelope_id=env.id,
             )
         except Exception:
-            log.exception("supervisor: DM LLM call failed")
+            log.exception("supervisor: chat LLM call failed")
             return None
         return AgentResult(
             reply_text=raw or "(叶霏好像卡壳了,欧尼酱再说一次嘛~)",
