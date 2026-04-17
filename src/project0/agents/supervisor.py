@@ -19,8 +19,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from project0.agents._tool_loop import run_agentic_loop, TurnState
 from project0.envelope import AgentResult, Envelope
 from project0.llm.provider import Msg
+from project0.llm.tools import ToolCall, ToolSpec
 from project0.store import SupervisorReviewRow
 
 if TYPE_CHECKING:
@@ -396,6 +398,45 @@ class ReviewEngine:
         return obj
 
 
+# --- chat tools -------------------------------------------------------------
+
+_RUN_REVIEW_NOW_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "agent": {
+            "type": "string",
+            "enum": ["manager", "intelligence", "learning"],
+            "description": "Which agent to review now. Secretary is not allowed.",
+        },
+    },
+    "required": ["agent"],
+}
+
+_RUN_REVIEW_ALL_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {},
+    "required": [],
+}
+
+_LIST_PAST_REVIEWS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "agent": {
+            "type": "string",
+            "enum": ["manager", "intelligence", "learning"],
+            "description": "Which agent's past reviews to fetch.",
+        },
+        "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30,
+            "description": "How many recent reviews to return. Default 5.",
+        },
+    },
+    "required": ["agent"],
+}
+
+
 # --- Supervisor agent -------------------------------------------------------
 
 
@@ -436,6 +477,119 @@ class Supervisor:
             quiet_threshold_seconds=config.quiet_threshold_seconds,
             max_wait_seconds=config.max_wait_seconds,
         )
+        self._tool_specs = self._build_tool_specs()
+
+    def _build_tool_specs(self) -> list[ToolSpec]:
+        return [
+            ToolSpec(
+                name="run_review_now",
+                description=(
+                    "Immediately run an on-demand rubric review for ONE reviewable "
+                    "agent (manager/intelligence/learning). Bypasses the idle gate. "
+                    "Returns the new review's score and critique, or a message that "
+                    "the agent has no new conversation since the last cursor."
+                ),
+                input_schema=_RUN_REVIEW_NOW_SCHEMA,
+            ),
+            ToolSpec(
+                name="run_review_all",
+                description=(
+                    "Run on-demand reviews for all three reviewable agents "
+                    "(manager/intelligence/learning). Secretary is never included. "
+                    "Agents with no new envelopes since their cursor are auto-"
+                    "skipped. Returns a per-agent summary."
+                ),
+                input_schema=_RUN_REVIEW_ALL_SCHEMA,
+            ),
+            ToolSpec(
+                name="list_past_reviews",
+                description=(
+                    "Fetch the most recent stored reviews for one agent. Use this "
+                    "before suggesting a new review, or to summarize historical "
+                    "scores for the user."
+                ),
+                input_schema=_LIST_PAST_REVIEWS_SCHEMA,
+            ),
+        ]
+
+    async def _dispatch_tool(
+        self, call: ToolCall, turn_state: TurnState,
+    ) -> tuple[str, bool]:
+        name = call.name
+        inp = call.input
+        try:
+            if name == "run_review_now":
+                agent = str(inp["agent"])
+                if agent == "secretary":
+                    return "不能评审 Secretary — 她不在我的视野里。", True
+                if agent not in REVIEWED_AGENTS:
+                    return f"unknown agent: {agent!r}", True
+                row = await self._run_review_for_agent(agent, trigger="on_demand")
+                if row is None:
+                    return json.dumps({
+                        "agent": agent,
+                        "status": "no_new_envelopes",
+                        "message": f"{agent} 最近没有新对话, 没什么可评的。",
+                    }, ensure_ascii=False), False
+                return self._format_review_row(row), False
+
+            if name == "run_review_all":
+                results = []
+                for agent in REVIEWED_AGENTS:
+                    row = await self._run_review_for_agent(
+                        agent, trigger="on_demand"
+                    )
+                    if row is None:
+                        results.append({
+                            "agent": agent,
+                            "status": "no_new_envelopes",
+                        })
+                    else:
+                        results.append(json.loads(self._format_review_row(row)))
+                return json.dumps(results, ensure_ascii=False), False
+
+            if name == "list_past_reviews":
+                agent = str(inp["agent"])
+                if agent == "secretary":
+                    return "Secretary 没有 review 记录。", True
+                if agent not in REVIEWED_AGENTS:
+                    return f"unknown agent: {agent!r}", True
+                limit = int(inp.get("limit", 5))
+                rows = self._reviews.recent_for_agent(agent, limit=limit)
+                if not rows:
+                    return json.dumps({
+                        "agent": agent,
+                        "count": 0,
+                        "rows": [],
+                    }, ensure_ascii=False), False
+                return json.dumps({
+                    "agent": agent,
+                    "count": len(rows),
+                    "rows": [json.loads(self._format_review_row(r)) for r in rows],
+                }, ensure_ascii=False), False
+
+            return f"unknown tool: {name}", True
+        except (KeyError, ValueError, TypeError) as exc:
+            return f"invalid input for {name}: {exc}", True
+
+    @staticmethod
+    def _format_review_row(row: SupervisorReviewRow) -> str:
+        return json.dumps({
+            "id": row.id,
+            "ts": row.ts,
+            "agent": row.agent,
+            "envelope_count": row.envelope_count,
+            "envelope_id_from": row.envelope_id_from,
+            "envelope_id_to": row.envelope_id_to,
+            "score_overall": row.score_overall,
+            "score_helpfulness": row.score_helpfulness,
+            "score_correctness": row.score_correctness,
+            "score_tone": row.score_tone,
+            "score_efficiency": row.score_efficiency,
+            "critique_text": row.critique_text,
+            "recommendations": json.loads(row.recommendations_json),
+            "trigger": row.trigger,
+        }, ensure_ascii=False)
 
     async def handle(self, env: Envelope) -> AgentResult | None:
         if env.routing_reason == "pulse":
@@ -481,7 +635,9 @@ class Supervisor:
                     agent,
                 )
 
-    async def _run_review_for_agent(self, agent: str, *, trigger: str) -> None:
+    async def _run_review_for_agent(
+        self, agent: str, *, trigger: str
+    ) -> SupervisorReviewRow | None:
         cursor = int(self._memory.get(f"cursor:{agent}") or 0)
         envs = self._messages.envelopes_for_review(
             agent=agent,
@@ -489,7 +645,7 @@ class Supervisor:
             limit=self._config.per_tick_limit,
         )
         if not envs:
-            return
+            return None
 
         review = await self._engine.run_review(
             agent=agent,
@@ -502,7 +658,7 @@ class Supervisor:
                 "supervisor: review returned None for agent=%s; cursor unchanged",
                 agent,
             )
-            return
+            return None
 
         row = SupervisorReviewRow(
             id=0,
@@ -523,25 +679,39 @@ class Supervisor:
         async with self._store.lock:
             self._reviews.insert(row)
             self._memory.set(f"cursor:{agent}", review.envelope_id_to)
+        # Fetch back via store to get the real id populated (insert may have
+        # returned existing id on exact-match idempotency).
+        return self._reviews.latest_for_agent(agent)
 
     # --- chat path (DM + group mention) -------------------------------------
 
     async def _handle_chat(self, env: Envelope) -> AgentResult | None:
-        system = self._persona.core + "\n\n" + self._persona.dm_mode
+        system = (
+            self._persona.core
+            + "\n\n"
+            + self._persona.dm_mode
+            + "\n\n"
+            + self._persona.tool_use_guide
+        )
         try:
-            raw = await self._llm.complete(
+            loop_result = await run_agentic_loop(
+                llm=self._llm,
                 system=system,
-                messages=[Msg(role="user", content=env.body)],
+                initial_user_text=env.body,
+                tools=self._tool_specs,
+                dispatch_tool=self._dispatch_tool,
+                max_iterations=self._config.max_tool_iterations,
                 max_tokens=self._config.max_tokens_reply,
                 agent="supervisor",
                 purpose="chat_reply",
                 envelope_id=env.id,
             )
         except Exception:
-            log.exception("supervisor: chat LLM call failed")
+            log.exception("supervisor: chat tool loop failed")
             return None
+        reply = loop_result.final_text
         return AgentResult(
-            reply_text=raw or "(叶霏好像卡壳了,欧尼酱再说一次嘛~)",
+            reply_text=reply if reply else "(叶霏好像卡壳了,欧尼酱再说一次嘛~)",
             delegate_to=None,
             handoff_text=None,
         )

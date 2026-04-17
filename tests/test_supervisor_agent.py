@@ -206,6 +206,22 @@ class _FakeLLM:
         })
         return self.next_response
 
+    async def complete_with_tools(
+        self, *, system, messages, tools, max_tokens, agent, purpose,
+        envelope_id=None,
+    ):
+        # Record as a call, then return a plain text response (no tool use).
+        if self.calls is None:
+            self.calls = []
+        self.calls.append({
+            "agent": agent, "purpose": purpose,
+            "system": system,
+            "messages": [m.content if hasattr(m, "content") else str(m) for m in messages],
+            "had_tools": tools is not None and len(tools) > 0,
+        })
+        from project0.llm.tools import ToolUseResult
+        return ToolUseResult(kind="text", text=self.next_response, tool_calls=[])
+
 
 import asyncio
 
@@ -531,6 +547,7 @@ def test_dm_path_returns_reply_using_dm_persona_section(tmp_path) -> None:
     assert "DM_MODE_SECTION" in call_system
     assert "PULSE_MODE_SECTION" not in call_system
     assert fake_llm.calls[0]["purpose"] == "chat_reply"
+    assert fake_llm.calls[0]["had_tools"] is True
 
 
 def test_mention_in_group_routes_to_chat_path(tmp_path) -> None:
@@ -579,6 +596,7 @@ def test_mention_in_group_routes_to_chat_path(tmp_path) -> None:
     assert "DM_MODE_SECTION" in call_system
     assert "PULSE_MODE_SECTION" not in call_system
     assert fake_llm.calls[0]["purpose"] == "chat_reply"
+    assert fake_llm.calls[0]["had_tools"] is True
 
 
 def test_focus_followup_routes_to_chat_path(tmp_path) -> None:
@@ -624,6 +642,7 @@ def test_focus_followup_routes_to_chat_path(tmp_path) -> None:
     assert "欧尼酱" in result.reply_text
     assert fake_llm.calls is not None
     assert fake_llm.calls[0]["purpose"] == "chat_reply"
+    assert fake_llm.calls[0]["had_tools"] is True
 
 
 def test_pulse_path_uses_pulse_mode_not_dm_mode(tmp_path) -> None:
@@ -674,6 +693,323 @@ def test_pulse_path_uses_pulse_mode_not_dm_mode(tmp_path) -> None:
     assert "PULSE_MODE_SECTION" in call_system
     assert "DM_MODE_SECTION" not in call_system
     assert fake_llm.calls[0]["purpose"] == "review"
+
+
+# --- tool-use chat path tests -----------------------------------------------
+
+
+def test_run_review_now_tool_bypasses_idle_gate(tmp_path) -> None:
+    from project0.agents.supervisor import (
+        Supervisor, SupervisorConfig, SupervisorPersona,
+    )
+    from project0.store import Store
+    from project0.llm.tools import ToolCall, ToolUseResult
+
+    store = Store(str(tmp_path / "store.db"))
+    store.init_schema()
+
+    # Seed RECENT user activity — would normally block the idle gate.
+    _insert_user_envelope_now(store, chat_id=100, body="hi mgr", msg_id=1)
+    # Manager replies in the same chat:
+    now_iso = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    store.messages().insert(Envelope(
+        id=None, ts=now_iso, parent_id=None, source="internal",
+        telegram_chat_id=100, telegram_msg_id=None, received_by_bot=None,
+        from_kind="agent", from_agent="manager", to_agent="user",
+        body="hi user",
+    ))
+
+    persona = SupervisorPersona(
+        core="CORE", dm_mode="DM", pulse_mode="PULSE", tool_use_guide="TOOLS",
+    )
+    cfg = SupervisorConfig(
+        model="fake", max_tokens_reply=1024, max_tool_iterations=6,
+        transcript_window=10,
+        quiet_threshold_seconds=300, max_wait_seconds=3600, per_tick_limit=200,
+    )
+
+    good_review = json.dumps({
+        "agent": "manager",
+        "envelope_id_from": 1, "envelope_id_to": 2, "envelope_count": 2,
+        "score_helpfulness": 80, "score_correctness": 80,
+        "score_tone": 80, "score_efficiency": 80,
+        "critique_text": "Manager 回应及时。",
+        "recommendations": [],
+    })
+
+    # Scripted LLM: first call returns a tool_use for run_review_now(manager);
+    # second call returns the engine's review JSON (for ReviewEngine.run_review);
+    # third call returns a final text reply summarizing it.
+    class _ScriptedLLM:
+        def __init__(self):
+            self.complete_calls = 0
+            self.complete_with_tools_calls = 0
+
+        async def complete(self, *, system, messages, max_tokens, agent, purpose,
+                           envelope_id=None, thinking_budget_tokens=None):
+            # Called by ReviewEngine
+            self.complete_calls += 1
+            return good_review
+
+        async def complete_with_tools(self, *, system, messages, tools,
+                                      max_tokens, agent, purpose, envelope_id=None):
+            self.complete_with_tools_calls += 1
+            if self.complete_with_tools_calls == 1:
+                # Model wants to run the tool.
+                return ToolUseResult(
+                    kind="tool_use",
+                    text=None,
+                    tool_calls=[ToolCall(id="c1", name="run_review_now",
+                                         input={"agent": "manager"})],
+                )
+            # Second round: produce final text reply.
+            return ToolUseResult(
+                kind="text",
+                text="Manager 分 80 分,很稳哦~",
+                tool_calls=[],
+            )
+
+    llm = _ScriptedLLM()
+    sup = Supervisor(llm=llm, store=store, persona=persona, config=cfg)
+
+    dm_env = Envelope(
+        id=None, ts="2026-04-18T02:55:00Z", parent_id=None,
+        source="telegram_dm", telegram_chat_id=42, telegram_msg_id=99,
+        received_by_bot="supervisor",
+        from_kind="user", from_agent=None, to_agent="supervisor",
+        body="帮我跑一次 Manager 的评价",
+        routing_reason="direct_dm",
+    )
+    result = asyncio.run(sup.handle(dm_env))
+
+    assert result is not None
+    assert result.reply_text is not None
+    assert "80" in result.reply_text or "稳" in result.reply_text
+    # Review actually persisted, despite busy chat (gate was bypassed).
+    rs = store.supervisor_reviews()
+    assert rs.latest_for_agent("manager") is not None
+
+
+def test_list_past_reviews_tool_returns_stored_rows(tmp_path) -> None:
+    from project0.agents.supervisor import (
+        Supervisor, SupervisorConfig, SupervisorPersona,
+    )
+    from project0.store import Store, SupervisorReviewRow
+    from project0.llm.tools import ToolCall, ToolUseResult
+
+    store = Store(str(tmp_path / "store.db"))
+    store.init_schema()
+
+    # Seed a past review so list_past_reviews has something to return.
+    store.supervisor_reviews().insert(SupervisorReviewRow(
+        id=0, ts="2026-04-17T10:00:00Z", agent="manager",
+        envelope_id_from=1, envelope_id_to=5, envelope_count=5,
+        score_overall=77,
+        score_helpfulness=80, score_correctness=75,
+        score_tone=85, score_efficiency=70,
+        critique_text="前一次表现不错。",
+        recommendations_json="[]",
+        trigger="pulse",
+    ))
+
+    persona = SupervisorPersona(
+        core="CORE", dm_mode="DM", pulse_mode="PULSE", tool_use_guide="TOOLS",
+    )
+    cfg = SupervisorConfig(
+        model="fake", max_tokens_reply=1024, max_tool_iterations=6,
+        transcript_window=10,
+        quiet_threshold_seconds=300, max_wait_seconds=3600, per_tick_limit=200,
+    )
+
+    captured_tool_content = {}
+
+    class _CaptureLLM:
+        def __init__(self):
+            self.n = 0
+
+        async def complete(self, **kw):
+            return "unused"
+
+        async def complete_with_tools(self, *, system, messages, tools,
+                                      max_tokens, agent, purpose, envelope_id=None):
+            self.n += 1
+            if self.n == 1:
+                return ToolUseResult(
+                    kind="tool_use",
+                    text=None,
+                    tool_calls=[ToolCall(id="c1", name="list_past_reviews",
+                                         input={"agent": "manager", "limit": 3})],
+                )
+            # Capture the ToolResultMsg content before returning final text.
+            for m in messages:
+                if hasattr(m, "tool_use_id") and getattr(m, "tool_use_id", None) == "c1":
+                    captured_tool_content["body"] = m.content
+            return ToolUseResult(
+                kind="text",
+                text="manager 之前一次是 77 分哦",
+                tool_calls=[],
+            )
+
+    llm = _CaptureLLM()
+    sup = Supervisor(llm=llm, store=store, persona=persona, config=cfg)
+
+    dm_env = Envelope(
+        id=None, ts="2026-04-18T02:55:00Z", parent_id=None,
+        source="telegram_dm", telegram_chat_id=42, telegram_msg_id=99,
+        received_by_bot="supervisor",
+        from_kind="user", from_agent=None, to_agent="supervisor",
+        body="Manager 上次什么分?",
+        routing_reason="direct_dm",
+    )
+    asyncio.run(sup.handle(dm_env))
+
+    assert "body" in captured_tool_content
+    body = captured_tool_content["body"]
+    assert "77" in body
+    assert "manager" in body
+
+
+def test_run_review_all_skips_empty_and_rejects_secretary(tmp_path) -> None:
+    """run_review_all must never invoke envelopes_for_review('secretary')
+    and must skip agents whose slice is empty."""
+    from project0.agents.supervisor import (
+        Supervisor, SupervisorConfig, SupervisorPersona,
+    )
+    from project0.store import Store
+
+    store = Store(str(tmp_path / "store.db"))
+    store.init_schema()
+    # Only manager has envelopes.
+    _insert_user_envelope_at(
+        store, chat_id=100, body="hi", msg_id=1,
+        when=datetime.now(UTC) - timedelta(hours=2),
+    )
+
+    persona = SupervisorPersona(
+        core="CORE", dm_mode="DM", pulse_mode="PULSE", tool_use_guide="TOOLS",
+    )
+    cfg = SupervisorConfig(
+        model="fake", max_tokens_reply=1024, max_tool_iterations=6,
+        transcript_window=10,
+        quiet_threshold_seconds=300, max_wait_seconds=3600, per_tick_limit=200,
+    )
+
+    from project0.llm.tools import ToolCall, ToolUseResult
+
+    captured_tool_content = {}
+
+    good_review = json.dumps({
+        "agent": "manager",
+        "envelope_id_from": 1, "envelope_id_to": 1, "envelope_count": 1,
+        "score_helpfulness": 70, "score_correctness": 70,
+        "score_tone": 70, "score_efficiency": 70,
+        "critique_text": ".",
+        "recommendations": [],
+    })
+
+    class _ScriptedLLM:
+        def __init__(self):
+            self.n = 0
+
+        async def complete(self, **kw):
+            return good_review
+
+        async def complete_with_tools(self, *, system, messages, tools,
+                                      max_tokens, agent, purpose, envelope_id=None):
+            self.n += 1
+            if self.n == 1:
+                return ToolUseResult(
+                    kind="tool_use",
+                    text=None,
+                    tool_calls=[ToolCall(id="c1", name="run_review_all",
+                                         input={})],
+                )
+            for m in messages:
+                if hasattr(m, "tool_use_id") and getattr(m, "tool_use_id", None) == "c1":
+                    captured_tool_content["body"] = m.content
+            return ToolUseResult(kind="text", text="done", tool_calls=[])
+
+    llm = _ScriptedLLM()
+    sup = Supervisor(llm=llm, store=store, persona=persona, config=cfg)
+
+    dm_env = Envelope(
+        id=None, ts="2026-04-18T02:55:00Z", parent_id=None,
+        source="telegram_dm", telegram_chat_id=42, telegram_msg_id=99,
+        received_by_bot="supervisor",
+        from_kind="user", from_agent=None, to_agent="supervisor",
+        body="全部评一次",
+        routing_reason="direct_dm",
+    )
+    asyncio.run(sup.handle(dm_env))
+
+    body = captured_tool_content["body"]
+    # Manager got reviewed:
+    assert "manager" in body
+    # Intelligence and Learning were skipped (no envelopes):
+    assert '"no_new_envelopes"' in body
+    # Secretary never appears in the list:
+    assert "secretary" not in body
+
+
+def test_run_review_now_rejects_secretary(tmp_path) -> None:
+    from project0.agents.supervisor import (
+        Supervisor, SupervisorConfig, SupervisorPersona,
+    )
+    from project0.store import Store
+    from project0.llm.tools import ToolCall, ToolUseResult
+
+    store = Store(str(tmp_path / "store.db"))
+    store.init_schema()
+
+    persona = SupervisorPersona(
+        core="CORE", dm_mode="DM", pulse_mode="PULSE", tool_use_guide="TOOLS",
+    )
+    cfg = SupervisorConfig(
+        model="fake", max_tokens_reply=1024, max_tool_iterations=6,
+        transcript_window=10,
+        quiet_threshold_seconds=300, max_wait_seconds=3600, per_tick_limit=200,
+    )
+
+    captured = {}
+
+    class _ScriptedLLM:
+        def __init__(self):
+            self.n = 0
+
+        async def complete(self, **kw):
+            return "unused"
+
+        async def complete_with_tools(self, *, system, messages, tools,
+                                      max_tokens, agent, purpose, envelope_id=None):
+            self.n += 1
+            if self.n == 1:
+                return ToolUseResult(
+                    kind="tool_use",
+                    text=None,
+                    tool_calls=[ToolCall(id="c1", name="run_review_now",
+                                         input={"agent": "secretary"})],
+                )
+            for m in messages:
+                if hasattr(m, "tool_use_id") and getattr(m, "tool_use_id", None) == "c1":
+                    captured["content"] = m.content
+                    captured["is_error"] = getattr(m, "is_error", None)
+            return ToolUseResult(kind="text", text="sorry", tool_calls=[])
+
+    llm = _ScriptedLLM()
+    sup = Supervisor(llm=llm, store=store, persona=persona, config=cfg)
+
+    dm_env = Envelope(
+        id=None, ts="2026-04-18T02:55:00Z", parent_id=None,
+        source="telegram_dm", telegram_chat_id=42, telegram_msg_id=99,
+        received_by_bot="supervisor",
+        from_kind="user", from_agent=None, to_agent="supervisor",
+        body="评一下 secretary 吧",
+        routing_reason="direct_dm",
+    )
+    asyncio.run(sup.handle(dm_env))
+
+    assert captured.get("is_error") is True
+    assert "Secretary" in captured["content"]
 
 
 # --- registry wiring --------------------------------------------------------
