@@ -524,3 +524,24 @@ def test_dm_path_returns_reply_using_dm_persona_section(tmp_path) -> None:
     assert fake_llm.calls is not None
     assert len(fake_llm.calls) == 1
     assert result.delegate_to is None
+
+
+# --- registry wiring --------------------------------------------------------
+
+
+def test_register_supervisor_installs_into_correct_registries() -> None:
+    from project0.agents.registry import (
+        AGENT_REGISTRY, AGENT_SPECS, LISTENER_REGISTRY, PULSE_REGISTRY,
+        register_supervisor,
+    )
+
+    assert "supervisor" in AGENT_SPECS
+    assert AGENT_SPECS["supervisor"].token_env_key == "TELEGRAM_BOT_TOKEN_SUPERVISOR"
+
+    async def _fake_handle(env):
+        return None
+
+    register_supervisor(_fake_handle)
+    assert "supervisor" in AGENT_REGISTRY
+    assert "supervisor" in PULSE_REGISTRY
+    assert "supervisor" not in LISTENER_REGISTRY

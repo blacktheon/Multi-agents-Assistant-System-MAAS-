@@ -27,6 +27,7 @@ def _full_env() -> dict[str, str]:
         "TELEGRAM_BOT_TOKEN_INTELLIGENCE": "i-token",
         "TELEGRAM_BOT_TOKEN_SECRETARY": "s-token",
         "TELEGRAM_BOT_TOKEN_LEARNING": "l-token",
+        "TELEGRAM_BOT_TOKEN_SUPERVISOR": "sv-token",
         "TELEGRAM_ALLOWED_CHAT_IDS": "-100123,-100456",
         "TELEGRAM_ALLOWED_USER_IDS": "42",
         "ANTHROPIC_API_KEY": "sk-ant-xxx",
@@ -48,6 +49,7 @@ def test_load_settings_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
         "intelligence": "i-token",
         "secretary": "s-token",
         "learning": "l-token",
+        "supervisor": "sv-token",
     }
     assert s.allowed_chat_ids == frozenset({-100123, -100456})
     assert s.allowed_user_ids == frozenset({42})
@@ -63,6 +65,7 @@ def test_load_settings_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
         "TELEGRAM_BOT_TOKEN_INTELLIGENCE",
         "TELEGRAM_BOT_TOKEN_SECRETARY",
         "TELEGRAM_BOT_TOKEN_LEARNING",
+        "TELEGRAM_BOT_TOKEN_SUPERVISOR",
         "TELEGRAM_ALLOWED_CHAT_IDS",
         "TELEGRAM_ALLOWED_USER_IDS",
         "ANTHROPIC_API_KEY",

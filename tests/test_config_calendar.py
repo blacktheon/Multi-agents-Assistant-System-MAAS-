@@ -17,6 +17,7 @@ def base_env(monkeypatch, tmp_path):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN_INTELLIGENCE", "t2")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN_SECRETARY", "t3")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN_LEARNING", "t4")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN_SUPERVISOR", "t5")
     monkeypatch.setenv("TELEGRAM_ALLOWED_CHAT_IDS", "1")
     monkeypatch.setenv("TELEGRAM_ALLOWED_USER_IDS", "2")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-foo")

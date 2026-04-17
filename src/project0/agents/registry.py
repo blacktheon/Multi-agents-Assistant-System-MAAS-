@@ -57,6 +57,9 @@ AGENT_SPECS: dict[str, AgentSpec] = {
         name="secretary", token_env_key="TELEGRAM_BOT_TOKEN_SECRETARY"
     ),
     "learning": AgentSpec(name="learning", token_env_key="TELEGRAM_BOT_TOKEN_LEARNING"),
+    "supervisor": AgentSpec(
+        name="supervisor", token_env_key="TELEGRAM_BOT_TOKEN_SUPERVISOR"
+    ),
 }
 
 
@@ -129,3 +132,22 @@ def register_learning(handle: AgentOptionalFn) -> None:
 
     AGENT_REGISTRY["learning"] = agent_adapter
     PULSE_REGISTRY["learning"] = handle
+
+
+def register_supervisor(handle: AgentOptionalFn) -> None:
+    """Install Supervisor's ``handle`` into AGENT_REGISTRY + PULSE_REGISTRY.
+    Not added to LISTENER_REGISTRY — 叶霏 does not passively witness group
+    chats; she reviews the stored messages log after the fact."""
+
+    async def agent_adapter(env: Envelope) -> AgentResult:
+        result = await handle(env)
+        if result is None:
+            return AgentResult(
+                reply_text="(叶霏走神了...等我一下嘛~)",
+                delegate_to=None,
+                handoff_text=None,
+            )
+        return result
+
+    AGENT_REGISTRY["supervisor"] = agent_adapter
+    PULSE_REGISTRY["supervisor"] = handle
