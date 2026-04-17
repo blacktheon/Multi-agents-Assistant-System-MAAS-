@@ -466,6 +466,45 @@ class MessagesStore:
         ).fetchone()
         return row is not None
 
+    _REVIEWABLE_AGENTS: frozenset[str] = frozenset({
+        "manager", "intelligence", "learning",
+    })
+
+    def envelopes_for_review(
+        self, *, agent: str, after_id: int, limit: int = 200
+    ) -> list[Envelope]:
+        """Return envelopes newer than ``after_id`` where ``agent`` is a
+        direct participant. Used exclusively by the Supervisor Agent to
+        gather the review window for one of the three reviewable agents.
+
+        Rejects ``agent='secretary'`` and any unknown name — defense in
+        depth so a future code path cannot accidentally ask Supervisor to
+        inspect Secretary. See design spec §6.5.
+        """
+        if agent == "secretary":
+            raise ValueError(
+                "Supervisor must not review Secretary; "
+                "see docs/superpowers/specs/2026-04-17-supervisor-agent-design.md §6"
+            )
+        if agent not in self._REVIEWABLE_AGENTS:
+            raise ValueError(f"unknown reviewable agent {agent!r}")
+        rows = self._conn.execute(
+            """
+            SELECT id, envelope_json FROM messages
+            WHERE id > ?
+              AND (to_agent = ? OR from_agent = ?)
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            (after_id, agent, agent, limit),
+        ).fetchall()
+        result: list[Envelope] = []
+        for r in rows:
+            env = Envelope.from_json(r["envelope_json"])
+            env.id = r["id"]
+            result.append(env)
+        return result
+
 
 class ChatFocusStore:
     def __init__(self, conn: sqlite3.Connection) -> None:

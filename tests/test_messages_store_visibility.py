@@ -102,3 +102,47 @@ def test_intelligence_caller_does_not_see_secretary_envelopes(tmp_path) -> None:
     for e in got:
         assert e.from_agent != "secretary"
         assert e.to_agent != "secretary"
+
+
+def test_envelopes_for_review_returns_only_target_agent(tmp_path) -> None:
+    store = Store(str(tmp_path / "store.db"))
+    store.init_schema()
+    _seed(store)
+    msgs = store.messages()
+    got = msgs.envelopes_for_review(agent="manager", after_id=0, limit=50)
+    bodies = [e.body for e in got]
+    assert "帮我看看明天的日程" in bodies    # to_agent=manager
+    assert "明天下午两点有会议" in bodies    # from_agent=manager
+    assert "(listener) user asked manager about schedule" not in bodies
+    assert "记得多喝水哦" not in bodies
+
+
+def test_envelopes_for_review_respects_after_id(tmp_path) -> None:
+    store = Store(str(tmp_path / "store.db"))
+    store.init_schema()
+    _seed(store)
+    msgs = store.messages()
+    all_mgr = msgs.envelopes_for_review(agent="manager", after_id=0, limit=50)
+    assert len(all_mgr) >= 2
+    mid_id = all_mgr[0].id
+    assert mid_id is not None
+    got = msgs.envelopes_for_review(agent="manager", after_id=mid_id, limit=50)
+    ids = [e.id for e in got]
+    for i in ids:
+        assert i > mid_id
+
+
+def test_envelopes_for_review_rejects_secretary(tmp_path) -> None:
+    store = Store(str(tmp_path / "store.db"))
+    store.init_schema()
+    msgs = store.messages()
+    with pytest.raises(ValueError, match="Secretary"):
+        msgs.envelopes_for_review(agent="secretary", after_id=0, limit=50)
+
+
+def test_envelopes_for_review_rejects_unknown_agent(tmp_path) -> None:
+    store = Store(str(tmp_path / "store.db"))
+    store.init_schema()
+    msgs = store.messages()
+    with pytest.raises(ValueError, match="unknown reviewable agent"):
+        msgs.envelopes_for_review(agent="nobody", after_id=0, limit=50)
