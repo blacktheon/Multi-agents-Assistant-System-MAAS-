@@ -1,8 +1,8 @@
 # MAAS — Multi-Agent Assistant System
 
-**A personal assistant that isn't one agent — it's a small team.** Four specialists live inside Telegram as four separate bots, each with their own character, memory, and skills. They coordinate with each other, handle your calendar, brief you on tech news every morning, manage your knowledge base, and reply in the same chat you already use to talk to friends.
+**A personal assistant that isn't one agent — it's a small team.** Five specialists live inside Telegram as five separate bots, each with their own character, memory, and skills. They coordinate with each other, handle your calendar, brief you on tech news every morning, manage your knowledge base, review each other's performance, and reply in the same chat you already use to talk to friends.
 
-Built with Python 3.12, FastAPI, SQLite (WAL mode), and Claude (Anthropic API). Ships with a WebUI control panel for managing settings, editing agent personas, and monitoring token usage from your phone. Single user. Speaks Chinese.
+Built with Python 3.12, FastAPI, SQLite (WAL mode), and Claude (Anthropic API). Ships with a WebUI control panel for managing settings, editing agent personas, monitoring token usage, and reading agent-performance reviews from your phone. Single user. Speaks Chinese.
 
 ---
 
@@ -43,6 +43,17 @@ Your knowledge curator and review coach.
 - Syncs with Notion every 30 seconds so you can browse, edit, and reorganize entries on your phone and she stays in sync
 - Warm older-sister persona — calls you 少爷, gently nudges you to review, celebrates when you complete reviews
 
+### 叶霏 · Supervisor
+Your agent-performance reviewer.
+
+- Runs a scheduled **review every 3 hours** across Manager, Intelligence, and Learning (never Secretary — her chats are private), waiting for 5 minutes of chat silence before starting so she doesn't interrupt mid-conversation
+- Scores each agent on four dimensions — helpfulness / correctness / tone-consistency / efficiency — with a weighted overall 0-100, a short Chinese critique, and up to three concrete recommendations per review
+- Reviews once only: a per-agent cursor tracks the last reviewed envelope id so windows never overlap
+- Ask her anything in chat: `@MAAS_supervisor_bot 最近林夕表现怎么样？` → she pulls the stored review rows and narrates them in her voice
+- Ask her to run a review now: `帮我跑一次manager的评价` or `全部评一遍` — she calls her review tools on the spot (bypassing the idle gate since you asked), auto-skips agents with no new conversation, never touches Secretary
+- Young-undergraduate voice (calls you 欧尼酱, playful and flirty in private chat); switches to a cold, impartial auditor voice when producing the rubric JSON in pulse mode
+- History and trends surface in the control panel's new `/reviews` page
+
 ### Behind the scenes
 - A shared **orchestrator** routes every Telegram message to the right agent based on `@mentions` and sticky focus
 - A single **audit log** (SQLite) captures every envelope — user message, agent reply, internal delegation, pulse tick — with parent-child links for full conversation trees
@@ -75,9 +86,9 @@ This installs Python 3.12 via `uv` and all dependencies.
 
 Open Telegram and talk to `@BotFather`:
 
-1. `/newbot` four times — create one bot each for **Manager**, **Secretary**, **Intelligence**, and **Learning**. Save all four tokens somewhere.
+1. `/newbot` five times — create one bot each for **Manager**, **Secretary**, **Intelligence**, **Learning**, and **Supervisor**. Save all five tokens somewhere.
 2. For each bot run `/setprivacy` → pick the bot → **Disable**. This is required so bots in groups can see every message, not only direct mentions.
-3. Create a Telegram group, add all four bots, send a test message so the group exists.
+3. Create a Telegram group, add all five bots, send a test message so the group exists.
 4. Find the group's numeric `chat_id` (it's negative and starts with `-100`). Easiest way: run MAAS once with `LOG_LEVEL=DEBUG` and watch the logs.
 5. Find your own Telegram user id by talking to `@userinfobot`.
 
@@ -123,6 +134,7 @@ TELEGRAM_BOT_TOKEN_MANAGER=...
 TELEGRAM_BOT_TOKEN_SECRETARY=...
 TELEGRAM_BOT_TOKEN_INTELLIGENCE=...
 TELEGRAM_BOT_TOKEN_LEARNING=...
+TELEGRAM_BOT_TOKEN_SUPERVISOR=...
 
 TELEGRAM_ALLOWED_CHAT_IDS=-100123456789   # your group chat id
 TELEGRAM_ALLOWED_USER_IDS=12345678        # your Telegram user id
@@ -136,6 +148,10 @@ GOOGLE_CALENDAR_ID=primary                # or a non-primary calendar id
 
 # --- Manager pulse (where calendar reminders get delivered) ---
 MANAGER_PULSE_CHAT_ID=-100123456789       # same as your allowed group id
+
+# --- Supervisor pulse target (叶霏 never sends from pulse path,
+# but the pulse plumbing requires a valid chat id) ---
+SUPERVISOR_PULSE_CHAT_ID=-100123456789
 
 # --- Intelligence (Step 6) ---
 TWITTERAPI_IO_API_KEY=...
@@ -189,10 +205,13 @@ google calendar ready (calendar_id=primary tz=Asia/Shanghai)
 manager registered (model=claude-sonnet-4-6)
 intelligence registered (summarizer=claude-opus-4-6, qa=claude-sonnet-4-6, watchlist=20)
 learning registered (model=claude-sonnet-4-6)
+supervisor registered (model=claude-sonnet-4-6)
+supervisor pulse entries: [('review_cycle', 10800), ('review_retry', 60)]
 bot manager polling
 bot secretary polling
 bot intelligence polling
 bot learning polling
+bot supervisor polling
 pulse task spawned: notion_sync
 pulse task spawned: review_reminder
 intelligence webapp task spawned: bound to 0.0.0.0:8080
@@ -245,6 +264,14 @@ Create a calendar event for ~30 minutes from now. At the next pulse tick, Secret
 
 > **Note:** WeChat article links (`mp.weixin.qq.com`) often require login and can't be scraped. Paste the article text directly instead.
 
+### Agent reviews (Supervisor)
+
+- Every 3 hours, 叶霏 automatically reviews the last block of conversation for Manager, Intelligence, and Learning (never Secretary) — as long as the chat has been quiet for 5 minutes
+- `@MAAS_supervisor_bot 最近林夕表现怎么样` — she looks up stored reviews and narrates the scores
+- `跑一次manager的评价` or `跑一次林夕` — runs an on-demand review right now, bypassing the idle gate
+- `全部评一遍` — reviews all three agents in one turn, auto-skipping anyone with no new conversation since their last review
+- Open `http://<your-panel>:8090/reviews` on your phone — chart + per-agent cards + full critique history
+
 ### Reading reports on your phone
 
 Tap any URL Intelligence sends you. You'll see:
@@ -286,6 +313,7 @@ Intelligence webapp — reach it from your phone via your Tailnet IP.
   mode); no restart required.
 - **Token usage page** — daily SVG bar chart + rollup tables for the
   last 30 days, last 7 days by agent × purpose, and the last 50 calls.
+- **Review page** — `/reviews`: multi-line SVG time-series of overall scores, three per-agent cards (latest score + four rubric dims + sparkline + top recommendation), per-agent collapsible history with full critique text. Read-only surface into `supervisor_reviews`.
 
 ### Caveat: panel crash with MAAS still running
 
@@ -314,6 +342,7 @@ TELEGRAM_BOT_TOKEN_MANAGER=...
 TELEGRAM_BOT_TOKEN_SECRETARY=...
 TELEGRAM_BOT_TOKEN_INTELLIGENCE=...
 TELEGRAM_BOT_TOKEN_LEARNING=...
+TELEGRAM_BOT_TOKEN_SUPERVISOR=...
 
 # Allow-lists — required. MAAS refuses to start without these.
 TELEGRAM_ALLOWED_CHAT_IDS=-100123456789      # comma-separated for multiple
@@ -338,6 +367,10 @@ GOOGLE_CALENDAR_ID=primary                    # or a non-primary calendar id
 # Must match one of TELEGRAM_ALLOWED_CHAT_IDS.
 MANAGER_PULSE_CHAT_ID=-100123456789
 
+# Supervisor pulse target (叶霏 never sends from pulse path,
+# but the pulse plumbing requires a valid chat id)
+SUPERVISOR_PULSE_CHAT_ID=-100123456789
+
 # Intelligence
 TWITTERAPI_IO_API_KEY=...
 
@@ -353,6 +386,7 @@ Agent-specific configuration lives in `prompts/`:
 - `prompts/secretary.md` and `secretary.toml` — Secretary's persona and cooldown thresholds
 - `prompts/intelligence.md` and `intelligence.toml` — Intelligence's persona, watchlist, webapp binding, daily pulse hour
 - `prompts/learning.md` and `learning.toml` — Learning's persona, Notion sync interval, review intervals, processing limits
+- `prompts/supervisor.md` and `supervisor.toml` — Supervisor's persona and review rubric config (quiet threshold, max wait, per-tick limit, two pulse entries)
 
 To change Intelligence's daily briefing time, edit `prompts/intelligence.toml`:
 
@@ -427,7 +461,7 @@ learning bot ┘            content dedup   focus  ↘   Learning (LLM + Notion 
 
 ## Storage
 
-Single SQLite file at `data/store.db`. Six tables:
+Single SQLite file at `data/store.db`. Seven tables:
 
 - **`messages`** — first-class envelope log, append-only, with `parent_id` links. The audit / inspection surface.
 - **`agent_memory`** — per-agent private key-value storage. Isolation is enforced in the Python API, not in SQL.
@@ -435,6 +469,7 @@ Single SQLite file at `data/store.db`. Six tables:
 - **`chat_focus`** — per-chat routing state; wiped on every process restart.
 - **`knowledge_index`** — lightweight mirror of Notion database page metadata (titles, tags, timestamps). Learning agent's local index.
 - **`review_schedule`** — spaced repetition state per knowledge entry (interval step, next review date, times reviewed). MAAS-internal, not stored in Notion.
+- **`supervisor_reviews`** — append-only per-agent rubric review rows written by the Supervisor agent. One row per (agent, review window). Idempotent on `(agent, envelope_id_to)` so process restart mid-tick cannot duplicate.
 
 Access is gated through `src/project0/store.py`, which is a trust boundary — agent code never touches SQL directly.
 
@@ -446,7 +481,7 @@ Intelligence's data lives outside SQLite:
 ## Running the tests
 
 ```bash
-uv run pytest -q                 # 520+ tests, all hermetic
+uv run pytest -q                 # 577 tests, all hermetic
 uv run mypy src/project0
 uv run ruff check src tests
 ```
@@ -483,7 +518,8 @@ src/project0/
 │   ├── manager.py             # Manager (林夕): calendar tools + agentic loop + pulse
 │   ├── secretary.py           # Secretary: cooldown gate + four entry paths
 │   ├── intelligence.py        # Intelligence (顾瑾): five report tools + agentic loop + daily pulse
-│   └── learning.py            # Learning (温书瑶): Notion tools + review schedule + dual pulse
+│   ├── learning.py            # Learning (温书瑶): Notion tools + review schedule + dual pulse
+│   └── supervisor.py         # Supervisor (叶霏): three chat tools + pulse review + idle gate + review engine
 ├── intelligence/              # Intelligence infrastructure (sub-project 6d)
 │   ├── source.py              # TwitterSource protocol + Tweet dataclass
 │   ├── fake_source.py         # FakeTwitterSource for tests
@@ -504,11 +540,11 @@ src/project0/
 │   ├── __main__.py            # entry point: uv run python -m project0.control_panel
 │   ├── app.py                 # FastAPI factory with lifespan (stops MAAS on exit)
 │   ├── supervisor.py          # MAASSupervisor state machine (spawn/stop/restart)
-│   ├── routes.py              # all HTTP routes (home, profile, facts, toml, personas, env, usage)
+│   ├── routes.py              # all HTTP routes (home, profile, facts, toml, personas, env, usage, reviews)
 │   ├── paths.py               # allowlisted TOML/persona file resolution
 │   ├── writes.py              # atomic_write_text helper
 │   ├── rendering.py           # Jinja2 setup + SVG bar chart renderer
-│   ├── templates/             # base.html + page templates
+│   ├── templates/             # base.html + page templates (incl. reviews.html)
 │   └── static/                # style.css (mobile-responsive)
 ├── notion/                    # Notion service (Learning agent)
 │   ├── client.py              # async wrapper around notion-client SDK
@@ -523,7 +559,8 @@ prompts/
 ├── manager.md / .toml         # 林夕 persona + LLM / pulse config
 ├── secretary.md / .toml       # Secretary persona + cooldown thresholds
 ├── intelligence.md / .toml    # 顾瑾 persona + dual-LLM config + webapp bind + watchlist
-└── learning.md / .toml        # 温书瑶 persona + Notion sync + review intervals + processing config
+├── learning.md / .toml        # 温书瑶 persona + Notion sync + review intervals + processing config
+└── supervisor.md / .toml     # 叶霏 persona + review rubric config + dual pulse (cycle 10800s + retry 60s)
 
 data/                          # all gitignored
 ├── store.db                   # envelope log
@@ -551,6 +588,7 @@ The spec + plan cycle for each sub-project lives in `docs/superpowers/`. Read in
 - `specs/2026-04-15-intelligence-delivery-surface-design.md` — webapp, feedback capture, `get_report_link` tool, extended thinking
 - `specs/2026-04-16-control-panel-design.md` — WebUI control panel: supervisor state machine, file editors, facts CRUD, token usage
 - `specs/2026-04-16-learning-agent-design.md` — Learning agent: Notion-backed knowledge base curator + spaced repetition review coaching
+- `specs/2026-04-17-supervisor-agent-design.md` — Supervisor agent (叶霏): pulse-scheduled reviewer with idle gate, rubric scoring, DM/group chat tool loop, `/reviews` page
 
 Implementation plans matching each spec live under `plans/`.
 
@@ -569,9 +607,7 @@ Sub-projects completed (in order):
 
 - **Learning agent** — Notion-backed knowledge base curator (温书瑶). Processes links and text into structured knowledge entries, runs spaced repetition review coaching (1/3/7/14/30-day intervals), syncs with Notion every 30 seconds for bidirectional access.
 
-Next up:
-
-- **Supervisor agent** — audit + evaluation authority; built on derived views of the `messages` table
+- **Supervisor agent (叶霏)** — fifth agent, pulse-scheduled reviewer of Manager / Intelligence / Learning (never Secretary). Idle gate waits for 5 minutes of chat quiet before reviewing; exact-match idempotency on the per-agent cursor prevents overlap. Four-dimension rubric (helpfulness / correctness / tone / efficiency) with weighted overall score, short Chinese critique, and up to three recommendations per review. On-demand reviews via chat (`run_review_now`, `run_review_all`, `list_past_reviews`) bypass the idle gate; scheduled reviews run every 3 hours. Cross-cutting: Secretary-history isolation (`MessagesStore.recent_for_chat` requires a `visible_to` kwarg; non-Secretary callers never see Secretary envelopes). New `/reviews` page in the control panel: SVG time-series + per-agent cards + full critique history.
 
 Further out (in rough master-spec order):
 
