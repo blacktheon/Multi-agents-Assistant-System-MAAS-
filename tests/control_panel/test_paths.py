@@ -1,7 +1,8 @@
 """Allowlisted name → path resolution for TOML and persona edits.
 
 Prevents path traversal via ``..`` or absolute paths in URL params.
-Only three base names are permitted: manager, secretary, intelligence.
+Only named agents are permitted: manager, secretary, intelligence, learning,
+supervisor.
 """
 
 from pathlib import Path
@@ -16,7 +17,13 @@ from project0.control_panel.paths import (
 
 
 def test_allowed_names_are_fixed() -> None:
-    assert ALLOWED_AGENT_NAMES == ("manager", "secretary", "intelligence", "learning")
+    assert ALLOWED_AGENT_NAMES == (
+        "manager",
+        "secretary",
+        "intelligence",
+        "learning",
+        "supervisor",
+    )
 
 
 def test_toml_path_resolves_known_name(tmp_path: Path) -> None:
@@ -25,9 +32,10 @@ def test_toml_path_resolves_known_name(tmp_path: Path) -> None:
     assert p == tmp_path / "prompts" / "manager.toml"
 
 
-def test_toml_path_rejects_unknown_name(tmp_path: Path) -> None:
-    with pytest.raises(ValueError):
-        toml_path("supervisor", project_root=tmp_path)
+def test_toml_path_resolves_supervisor(tmp_path: Path) -> None:
+    (tmp_path / "prompts").mkdir()
+    p = toml_path("supervisor", project_root=tmp_path)
+    assert p == tmp_path / "prompts" / "supervisor.toml"
 
 
 def test_toml_path_rejects_traversal(tmp_path: Path) -> None:

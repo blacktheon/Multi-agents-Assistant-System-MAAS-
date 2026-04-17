@@ -1,0 +1,29 @@
+# Supervisor agent (叶霏) configuration.
+# Pulse-scheduled reviewer of Manager, Intelligence, Learning.
+
+[llm]
+model               = "claude-sonnet-4-6"
+max_tokens_reply    = 1024
+max_tool_iterations = 6
+
+[context]
+transcript_window = 10
+
+[review]
+quiet_threshold_seconds = 300   # activity within this window = not quiet
+max_wait_seconds        = 3600  # cap on consecutive busy retries; then run anyway
+per_tick_limit          = 200   # envelopes per agent per tick
+
+# review_cycle: every 3h. If not quiet, sets pending flag and returns early.
+[[pulse]]
+name          = "review_cycle"
+every_seconds = 10800
+chat_id_env   = "SUPERVISOR_PULSE_CHAT_ID"
+payload       = { kind = "review_cycle" }
+
+# review_retry: every 60s. Only does work if pending flag is set.
+[[pulse]]
+name          = "review_retry"
+every_seconds = 60
+chat_id_env   = "SUPERVISOR_PULSE_CHAT_ID"
+payload       = { kind = "review_retry" }

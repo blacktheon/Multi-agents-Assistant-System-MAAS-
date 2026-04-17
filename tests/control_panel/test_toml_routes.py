@@ -20,7 +20,7 @@ def test_toml_edit_renders_file(client: TestClient, project_root: Path) -> None:
 
 
 def test_toml_edit_unknown_name_404(client: TestClient) -> None:
-    r = client.get("/toml/supervisor")
+    r = client.get("/toml/unknown_agent")
     assert r.status_code == 404
 
 
@@ -37,5 +37,5 @@ def test_toml_post_overwrites(client: TestClient, project_root: Path) -> None:
 
 
 def test_toml_post_unknown_name_404(client: TestClient) -> None:
-    r = client.post("/toml/supervisor", data={"content": "x"})
+    r = client.post("/toml/unknown_agent", data={"content": "x"})
     assert r.status_code == 404
