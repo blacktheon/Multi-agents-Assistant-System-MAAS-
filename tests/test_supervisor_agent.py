@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import json
+
 import pytest
 
 
@@ -178,3 +180,148 @@ def test_idle_gate_clears_pending_on_quiet_run(tmp_path) -> None:
     assert result.should_run is True
     gate.clear_pending()
     assert memory.get("idle_gate:pending_since_ts") is None
+
+
+# --- review engine ----------------------------------------------------------
+
+from dataclasses import dataclass as _dc
+
+
+@_dc
+class _FakeLLM:
+    """Minimal stand-in for LLMProvider used only by ReviewEngine tests."""
+    next_response: str
+    calls: list[dict] | None = None
+
+    async def complete(
+        self, *, system, messages, max_tokens, agent, purpose,
+        envelope_id=None, thinking_budget_tokens=None,
+    ) -> str:
+        if self.calls is None:
+            self.calls = []
+        self.calls.append({
+            "agent": agent, "purpose": purpose,
+            "messages": [m.content for m in messages],
+        })
+        return self.next_response
+
+
+import asyncio
+
+
+def test_review_engine_happy_path() -> None:
+    from project0.agents.supervisor import ReviewEngine
+    from project0.envelope import Envelope
+
+    fake_llm_response = json.dumps({
+        "agent": "manager",
+        "envelope_id_from": 1,
+        "envelope_id_to": 10,
+        "envelope_count": 2,
+        "score_helpfulness": 80,
+        "score_correctness": 75,
+        "score_tone": 85,
+        "score_efficiency": 70,
+        "critique_text": "Manager 这一段回应及时,日程查询准确。",
+        "recommendations": [
+            {"target": "prompt", "summary": "更主动提醒",
+             "detail": "可以在确认日程后主动问一句是否需要提醒。"}
+        ],
+    }, ensure_ascii=False)
+    fake_llm = _FakeLLM(next_response=fake_llm_response)
+
+    envs = [
+        Envelope(id=1, ts="2026-04-17T09:00:00Z", parent_id=None,
+                 source="telegram_group", telegram_chat_id=100, telegram_msg_id=1,
+                 received_by_bot=None, from_kind="user", from_agent=None,
+                 to_agent="manager", body="我今天几点开会?"),
+        Envelope(id=10, ts="2026-04-17T09:00:05Z", parent_id=1,
+                 source="internal", telegram_chat_id=100, telegram_msg_id=None,
+                 received_by_bot=None, from_kind="agent", from_agent="manager",
+                 to_agent="user", body="下午两点。"),
+    ]
+
+    engine = ReviewEngine(llm=fake_llm, pulse_mode_section="# 模式:定时脉冲\n...")
+    result = asyncio.run(engine.run_review(
+        agent="manager", envelopes=envs, trigger="pulse",
+    ))
+    assert result is not None
+    assert result.score_helpfulness == 80
+    assert result.envelope_count == 2
+    assert result.envelope_id_from == 1
+    assert result.envelope_id_to == 10
+    assert result.score_overall == 77
+    recs = json.loads(result.recommendations_json)
+    assert len(recs) == 1
+    assert recs[0]["target"] == "prompt"
+
+
+def test_review_engine_rejects_malformed_json() -> None:
+    from project0.agents.supervisor import ReviewEngine
+    from project0.envelope import Envelope
+
+    fake_llm = _FakeLLM(next_response="not even json")
+    envs = [
+        Envelope(id=1, ts="2026-04-17T09:00:00Z", parent_id=None,
+                 source="telegram_group", telegram_chat_id=100, telegram_msg_id=1,
+                 received_by_bot=None, from_kind="user", from_agent=None,
+                 to_agent="manager", body="hi"),
+    ]
+    engine = ReviewEngine(llm=fake_llm, pulse_mode_section="# 模式:定时脉冲\n...")
+    assert asyncio.run(engine.run_review(
+        agent="manager", envelopes=envs, trigger="pulse",
+    )) is None
+
+
+def test_review_engine_rejects_out_of_range_scores() -> None:
+    from project0.agents.supervisor import ReviewEngine
+    from project0.envelope import Envelope
+
+    bad = json.dumps({
+        "agent": "manager",
+        "envelope_id_from": 1, "envelope_id_to": 1, "envelope_count": 1,
+        "score_helpfulness": 101, "score_correctness": 50,
+        "score_tone": 50, "score_efficiency": 50,
+        "critique_text": "x", "recommendations": [],
+    })
+    fake_llm = _FakeLLM(next_response=bad)
+    envs = [
+        Envelope(id=1, ts="2026-04-17T09:00:00Z", parent_id=None,
+                 source="telegram_group", telegram_chat_id=100, telegram_msg_id=1,
+                 received_by_bot=None, from_kind="user", from_agent=None,
+                 to_agent="manager", body="hi"),
+    ]
+    engine = ReviewEngine(llm=fake_llm, pulse_mode_section="# 模式:定时脉冲\n...")
+    assert asyncio.run(engine.run_review(
+        agent="manager", envelopes=envs, trigger="pulse",
+    )) is None
+
+
+def test_review_engine_caps_recommendations_at_three() -> None:
+    from project0.agents.supervisor import ReviewEngine
+    from project0.envelope import Envelope
+
+    too_many = json.dumps({
+        "agent": "manager",
+        "envelope_id_from": 1, "envelope_id_to": 1, "envelope_count": 1,
+        "score_helpfulness": 50, "score_correctness": 50,
+        "score_tone": 50, "score_efficiency": 50,
+        "critique_text": "x",
+        "recommendations": [
+            {"target": "prompt", "summary": "a", "detail": "a"},
+            {"target": "prompt", "summary": "b", "detail": "b"},
+            {"target": "prompt", "summary": "c", "detail": "c"},
+            {"target": "prompt", "summary": "d", "detail": "d"},
+        ],
+    })
+    fake_llm = _FakeLLM(next_response=too_many)
+    envs = [
+        Envelope(id=1, ts="2026-04-17T09:00:00Z", parent_id=None,
+                 source="telegram_group", telegram_chat_id=100, telegram_msg_id=1,
+                 received_by_bot=None, from_kind="user", from_agent=None,
+                 to_agent="manager", body="hi"),
+    ]
+    engine = ReviewEngine(llm=fake_llm, pulse_mode_section="# 模式:定时脉冲\n...")
+    assert asyncio.run(engine.run_review(
+        agent="manager", envelopes=envs, trigger="pulse",
+    )) is None

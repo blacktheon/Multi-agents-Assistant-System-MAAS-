@@ -225,3 +225,176 @@ class IdleGate:
 
     def has_pending(self) -> bool:
         return self._memory.get("idle_gate:pending_since_ts") is not None
+
+
+# --- review engine ----------------------------------------------------------
+
+from project0.llm.provider import Msg
+
+
+_REVIEW_SYSTEM_SUFFIX = """
+你必须只输出一个 JSON 对象, 不要添加任何 Markdown 围栏或注释。JSON 必须严格包含以下字段:
+- agent: 字符串, "manager" / "intelligence" / "learning" 之一
+- envelope_id_from: 整数 (窗口内最小 envelope id)
+- envelope_id_to: 整数 (窗口内最大 envelope id)
+- envelope_count: 整数 (本次 review 的 envelope 数)
+- score_helpfulness, score_correctness, score_tone, score_efficiency: 整数, 0-100
+- critique_text: 中文, 2-5 句, 无 Markdown
+- recommendations: 数组, 0 到 3 条, 每条 {target, summary, detail}
+任何其他字段、任何多于 3 条的 recommendations、任何 0-100 范围外的分数, 都视为错误。
+"""
+
+
+@dataclass(frozen=True)
+class ReviewResult:
+    """Shape returned by ReviewEngine.run_review — ready to hand to
+    SupervisorReviewsStore.insert (except id=0 placeholder)."""
+    ts: str
+    agent: str
+    envelope_id_from: int
+    envelope_id_to: int
+    envelope_count: int
+    score_overall: int
+    score_helpfulness: int
+    score_correctness: int
+    score_tone: int
+    score_efficiency: int
+    critique_text: str
+    recommendations_json: str
+    trigger: str
+
+
+class ReviewEngine:
+    """One-shot LLM reviewer that turns a slice of envelopes into a scored
+    critique. No retries, no silent repair: malformed outputs return None."""
+
+    def __init__(self, *, llm: "LLMProvider", pulse_mode_section: str) -> None:
+        self._llm = llm
+        self._pulse_mode = pulse_mode_section
+
+    async def run_review(
+        self,
+        *,
+        agent: str,
+        envelopes: list[Envelope],
+        trigger: str,
+        max_tokens: int = 1024,
+    ) -> ReviewResult | None:
+        if not envelopes:
+            return None
+        transcript = self._render_transcript(envelopes)
+        system = self._pulse_mode + "\n\n" + _REVIEW_SYSTEM_SUFFIX
+
+        user_text = (
+            f"你要评审的 agent 是: {agent}\n"
+            f"envelope_id_from = {envelopes[0].id}\n"
+            f"envelope_id_to = {envelopes[-1].id}\n"
+            f"envelope_count = {len(envelopes)}\n\n"
+            f"=== 对话记录 ===\n{transcript}\n"
+        )
+
+        try:
+            raw = await self._llm.complete(
+                system=system,
+                messages=[Msg(role="user", content=user_text)],
+                max_tokens=max_tokens,
+                agent="supervisor",
+                purpose="review",
+            )
+        except Exception:
+            log.exception("review: llm call failed for agent=%s", agent)
+            return None
+
+        parsed = self._parse_and_validate(raw, agent=agent, envelopes=envelopes)
+        if parsed is None:
+            return None
+
+        overall = round(
+            RUBRIC_WEIGHTS["helpfulness"] * parsed["score_helpfulness"]
+            + RUBRIC_WEIGHTS["correctness"] * parsed["score_correctness"]
+            + RUBRIC_WEIGHTS["tone"]        * parsed["score_tone"]
+            + RUBRIC_WEIGHTS["efficiency"]  * parsed["score_efficiency"]
+        )
+        ts = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+        return ReviewResult(
+            ts=ts,
+            agent=agent,
+            envelope_id_from=int(parsed["envelope_id_from"]),
+            envelope_id_to=int(parsed["envelope_id_to"]),
+            envelope_count=int(parsed["envelope_count"]),
+            score_overall=int(overall),
+            score_helpfulness=int(parsed["score_helpfulness"]),
+            score_correctness=int(parsed["score_correctness"]),
+            score_tone=int(parsed["score_tone"]),
+            score_efficiency=int(parsed["score_efficiency"]),
+            critique_text=str(parsed["critique_text"]),
+            recommendations_json=json.dumps(
+                parsed["recommendations"], ensure_ascii=False
+            ),
+            trigger=trigger,
+        )
+
+    @staticmethod
+    def _render_transcript(envelopes: list[Envelope]) -> str:
+        lines = []
+        for e in envelopes:
+            who = e.from_agent or e.from_kind
+            lines.append(f"[{e.id} {e.ts}] {who} → {e.to_agent}: {e.body}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _parse_and_validate(
+        raw: str, *, agent: str, envelopes: list[Envelope]
+    ) -> dict[str, Any] | None:
+        text = raw.strip()
+        if text.startswith("```"):
+            lines = [ln for ln in text.splitlines() if not ln.strip().startswith("```")]
+            text = "\n".join(lines)
+        try:
+            obj = json.loads(text)
+        except json.JSONDecodeError:
+            log.warning("review: non-JSON output rejected: %s", text[:200])
+            return None
+
+        required = {
+            "agent",
+            "envelope_id_from", "envelope_id_to", "envelope_count",
+            "score_helpfulness", "score_correctness",
+            "score_tone", "score_efficiency",
+            "critique_text", "recommendations",
+        }
+        missing = required - set(obj)
+        if missing:
+            log.warning("review: missing keys %s; rejecting", missing)
+            return None
+
+        if obj["agent"] != agent:
+            log.warning("review: agent mismatch %r vs %r", obj["agent"], agent)
+            return None
+
+        for score_key in (
+            "score_helpfulness", "score_correctness",
+            "score_tone", "score_efficiency",
+        ):
+            v = obj[score_key]
+            if not isinstance(v, int) or v < 0 or v > 100:
+                log.warning("review: %s out of range: %r", score_key, v)
+                return None
+
+        if not isinstance(obj["critique_text"], str) or not obj["critique_text"].strip():
+            log.warning("review: critique_text missing or blank")
+            return None
+
+        recs = obj["recommendations"]
+        if not isinstance(recs, list) or len(recs) > 3:
+            log.warning("review: recommendations must be list of <= 3; got %r", recs)
+            return None
+        for r in recs:
+            if not isinstance(r, dict):
+                log.warning("review: rec is not dict: %r", r)
+                return None
+            if {"target", "summary", "detail"} - set(r):
+                log.warning("review: rec missing fields: %r", r)
+                return None
+
+        return obj
