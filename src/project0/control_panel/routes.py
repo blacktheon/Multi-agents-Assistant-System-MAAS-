@@ -262,9 +262,9 @@ async def reviews(request: Request) -> object:
 
     agents = ("manager", "intelligence", "learning")
     agent_labels = {
-        "manager":      "经理",
-        "intelligence": "情报",
-        "learning":     "书瑶",
+        "manager":      "林夕 (经理)",
+        "intelligence": "顾瑾 (情报)",
+        "learning":     "温书瑶 (学习助手)",
     }
 
     cards = {a: reviews_store.latest_for_agent(a) for a in agents}
