@@ -21,15 +21,13 @@ from typing import TYPE_CHECKING, Any
 
 from project0.envelope import AgentResult, Envelope
 from project0.llm.provider import Msg
+from project0.store import SupervisorReviewRow
 
 if TYPE_CHECKING:
     from project0.llm.provider import LLMProvider
     from project0.store import (
         AgentMemory,
         MessagesStore,
-        SupervisorReviewsStore,
-        UserFactsReader,
-        UserProfile,
     )
 
 log = logging.getLogger(__name__)
@@ -506,7 +504,6 @@ class Supervisor:
             )
             return
 
-        from project0.store import SupervisorReviewRow
         row = SupervisorReviewRow(
             id=0,
             ts=review.ts,

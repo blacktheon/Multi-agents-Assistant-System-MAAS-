@@ -201,6 +201,7 @@ class _FakeLLM:
             self.calls = []
         self.calls.append({
             "agent": agent, "purpose": purpose,
+            "system": system,
             "messages": [m.content for m in messages],
         })
         return self.next_response
@@ -524,6 +525,62 @@ def test_dm_path_returns_reply_using_dm_persona_section(tmp_path) -> None:
     assert fake_llm.calls is not None
     assert len(fake_llm.calls) == 1
     assert result.delegate_to is None
+
+    # Voice guardrail: DM path must include dm_mode, never pulse_mode.
+    call_system = fake_llm.calls[0]["system"]
+    assert "DM_MODE_SECTION" in call_system
+    assert "PULSE_MODE_SECTION" not in call_system
+    assert fake_llm.calls[0]["purpose"] == "dm_reply"
+
+
+def test_pulse_path_uses_pulse_mode_not_dm_mode(tmp_path) -> None:
+    """Mirror test: pulse-mode review must include pulse_mode but never dm_mode."""
+    from project0.agents.supervisor import (
+        Supervisor, SupervisorConfig, SupervisorPersona,
+    )
+    from project0.store import Store
+
+    store = Store(str(tmp_path / "store.db"))
+    store.init_schema()
+
+    # Seed manager-only envelopes with old activity (so idle gate is quiet).
+    _insert_user_envelope_at(
+        store, chat_id=100, body="hello manager", msg_id=1,
+        when=datetime.now(UTC) - timedelta(hours=1),
+    )
+
+    persona = SupervisorPersona(
+        core="CORE",
+        dm_mode="DM_MODE_SECTION",
+        pulse_mode="PULSE_MODE_SECTION",
+        tool_use_guide="TOOLS",
+    )
+    cfg = SupervisorConfig(
+        model="fake", max_tokens_reply=1024, max_tool_iterations=6,
+        transcript_window=10,
+        quiet_threshold_seconds=300, max_wait_seconds=3600, per_tick_limit=200,
+    )
+    good_response = json.dumps({
+        "agent": "manager",
+        "envelope_id_from": 1, "envelope_id_to": 1, "envelope_count": 1,
+        "score_helpfulness": 80, "score_correctness": 80,
+        "score_tone": 80, "score_efficiency": 80,
+        "critique_text": "x.",
+        "recommendations": [],
+    })
+    fake_llm = _FakeLLM(next_response=good_response)
+
+    sup = Supervisor(
+        llm=fake_llm, store=store, persona=persona, config=cfg,
+    )
+    asyncio.run(sup.handle(_pulse_env("review_cycle")))
+
+    assert fake_llm.calls is not None
+    assert len(fake_llm.calls) >= 1
+    call_system = fake_llm.calls[0]["system"]
+    assert "PULSE_MODE_SECTION" in call_system
+    assert "DM_MODE_SECTION" not in call_system
+    assert fake_llm.calls[0]["purpose"] == "review"
 
 
 # --- registry wiring --------------------------------------------------------

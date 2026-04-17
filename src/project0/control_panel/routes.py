@@ -7,11 +7,16 @@ concern. Responses are always HTML pages or redirects — never JSON.
 
 from __future__ import annotations
 
+import json
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
 from project0.control_panel.paths import ALLOWED_AGENT_NAMES, persona_path, toml_path
-from project0.control_panel.rendering import render_bar_chart_svg
+from project0.control_panel.rendering import (
+    render_bar_chart_svg,
+    render_score_timeseries_svg,
+    render_sparkline_svg,
+)
 from project0.control_panel.writes import atomic_write_text
 from project0.store import UserFactsReader, UserFactsWriter
 
@@ -272,15 +277,14 @@ async def reviews(request: Request) -> object:
         a: spark_series[a] for a in agents
     }
 
-    import json as _json
     recommendations: dict[str, list[dict]] = {}
     for a in agents:
         if cards[a] is None:
             recommendations[a] = []
         else:
             try:
-                recommendations[a] = _json.loads(cards[a].recommendations_json) or []
-            except _json.JSONDecodeError:
+                recommendations[a] = json.loads(cards[a].recommendations_json) or []
+            except json.JSONDecodeError:
                 recommendations[a] = []
 
     history_recs: dict[str, list[list[dict]]] = {}
@@ -288,15 +292,11 @@ async def reviews(request: Request) -> object:
         per_row: list[list[dict]] = []
         for row in history[a]:
             try:
-                per_row.append(_json.loads(row.recommendations_json) or [])
-            except _json.JSONDecodeError:
+                per_row.append(json.loads(row.recommendations_json) or [])
+            except json.JSONDecodeError:
                 per_row.append([])
         history_recs[a] = per_row
 
-    from project0.control_panel.rendering import (
-        render_score_timeseries_svg,
-        render_sparkline_svg,
-    )
     chart_svg = render_score_timeseries_svg(chart_series)
     sparkline_svgs = {
         a: render_sparkline_svg([s for _, s in spark_series[a]]) for a in agents
