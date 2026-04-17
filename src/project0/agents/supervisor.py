@@ -396,3 +396,155 @@ class ReviewEngine:
                 return None
 
         return obj
+
+
+# --- Supervisor agent -------------------------------------------------------
+
+
+class Supervisor:
+    """叶霏 — pulse-scheduled reviewer + DM companion.
+
+    Pulse path branches on envelope.payload['kind']:
+        - 'review_cycle': idle-gate then review each of the three reviewable
+          agents against their cursor.
+        - 'review_retry': only proceed if an idle-gate pending flag is set.
+
+    DM path runs a plain LLM call with the DM persona section. No tool use
+    in v1.0 DM — the review surface is read-only through the control panel
+    and her answers summarize existing review rows.
+    """
+
+    def __init__(
+        self,
+        *,
+        llm: "LLMProvider",
+        store,                      # project0.store.Store; typed loosely to avoid circular import
+        persona: SupervisorPersona,
+        config: SupervisorConfig,
+    ) -> None:
+        self._llm = llm
+        self._store = store
+        self._persona = persona
+        self._config = config
+        self._memory = store.agent_memory("supervisor")
+        self._messages = store.messages()
+        self._reviews = store.supervisor_reviews()
+        self._engine = ReviewEngine(
+            llm=llm, pulse_mode_section=persona.pulse_mode,
+        )
+        self._gate = IdleGate(
+            messages_store=self._messages,
+            memory=self._memory,
+            quiet_threshold_seconds=config.quiet_threshold_seconds,
+            max_wait_seconds=config.max_wait_seconds,
+        )
+
+    async def handle(self, env: Envelope) -> AgentResult | None:
+        if env.routing_reason == "pulse":
+            return await self._handle_pulse(env)
+        if env.routing_reason == "direct_dm":
+            return await self._handle_dm(env)
+        log.debug("supervisor: ignoring routing_reason=%s", env.routing_reason)
+        return None
+
+    # --- pulse path ---------------------------------------------------------
+
+    async def _handle_pulse(self, env: Envelope) -> AgentResult | None:
+        payload = env.payload or {}
+        kind = str(payload.get("kind") or payload.get("pulse_name") or "")
+        if kind == "review_retry":
+            if not self._gate.has_pending():
+                return None
+            return await self._try_run_reviews(trigger="pulse")
+        if kind == "review_cycle":
+            return await self._try_run_reviews(trigger="pulse")
+        log.warning("supervisor: unknown pulse kind=%r", kind)
+        return None
+
+    async def _try_run_reviews(self, *, trigger: str) -> AgentResult | None:
+        result = self._gate.check(now=datetime.now(UTC))
+        if not result.should_run:
+            return None
+        if result.forced_after_cap:
+            log.warning("supervisor: forced_run_after_cap=True")
+        await self._run_all_reviews(trigger=trigger)
+        # Quiet pass → clear pending. Forced pass also clears (so the cap
+        # restarts fresh after we ran once).
+        self._gate.clear_pending()
+        return None  # pulse path never produces a user-visible reply
+
+    async def _run_all_reviews(self, *, trigger: str) -> None:
+        for agent in REVIEWED_AGENTS:
+            try:
+                await self._run_review_for_agent(agent, trigger=trigger)
+            except Exception:
+                log.exception(
+                    "supervisor: review failed for agent=%s; continuing",
+                    agent,
+                )
+
+    async def _run_review_for_agent(self, agent: str, *, trigger: str) -> None:
+        cursor = int(self._memory.get(f"cursor:{agent}") or 0)
+        envs = self._messages.envelopes_for_review(
+            agent=agent,
+            after_id=cursor,
+            limit=self._config.per_tick_limit,
+        )
+        if not envs:
+            return
+
+        review = await self._engine.run_review(
+            agent=agent,
+            envelopes=envs,
+            trigger=trigger,
+            max_tokens=self._config.max_tokens_reply,
+        )
+        if review is None:
+            log.warning(
+                "supervisor: review returned None for agent=%s; cursor unchanged",
+                agent,
+            )
+            return
+
+        from project0.store import SupervisorReviewRow
+        row = SupervisorReviewRow(
+            id=0,
+            ts=review.ts,
+            agent=review.agent,
+            envelope_id_from=review.envelope_id_from,
+            envelope_id_to=review.envelope_id_to,
+            envelope_count=review.envelope_count,
+            score_overall=review.score_overall,
+            score_helpfulness=review.score_helpfulness,
+            score_correctness=review.score_correctness,
+            score_tone=review.score_tone,
+            score_efficiency=review.score_efficiency,
+            critique_text=review.critique_text,
+            recommendations_json=review.recommendations_json,
+            trigger=review.trigger,
+        )
+        async with self._store.lock:
+            self._reviews.insert(row)
+            self._memory.set(f"cursor:{agent}", review.envelope_id_to)
+
+    # --- DM path ------------------------------------------------------------
+
+    async def _handle_dm(self, env: Envelope) -> AgentResult | None:
+        system = self._persona.core + "\n\n" + self._persona.dm_mode
+        try:
+            raw = await self._llm.complete(
+                system=system,
+                messages=[Msg(role="user", content=env.body)],
+                max_tokens=self._config.max_tokens_reply,
+                agent="supervisor",
+                purpose="dm_reply",
+                envelope_id=env.id,
+            )
+        except Exception:
+            log.exception("supervisor: DM LLM call failed")
+            return None
+        return AgentResult(
+            reply_text=raw or "(叶霏好像卡壳了,欧尼酱再说一次嘛~)",
+            delegate_to=None,
+            handoff_text=None,
+        )

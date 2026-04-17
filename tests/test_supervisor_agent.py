@@ -325,3 +325,202 @@ def test_review_engine_caps_recommendations_at_three() -> None:
     assert asyncio.run(engine.run_review(
         agent="manager", envelopes=envs, trigger="pulse",
     )) is None
+
+
+# --- Supervisor class / handle() --------------------------------------------
+
+def _pulse_env(kind: str) -> Envelope:
+    return Envelope(
+        id=None, ts="2026-04-17T09:00:00Z", parent_id=None,
+        source="pulse", telegram_chat_id=None, telegram_msg_id=None,
+        received_by_bot=None, from_kind="system", from_agent=None,
+        to_agent="supervisor", body=f"pulse:{kind}",
+        routing_reason="pulse", payload={"pulse_name": kind, "kind": kind},
+    )
+
+
+def test_pulse_review_cycle_runs_when_quiet(tmp_path) -> None:
+    from project0.agents.supervisor import (
+        Supervisor, SupervisorConfig, SupervisorPersona,
+    )
+    from project0.store import Store
+
+    store = Store(str(tmp_path / "store.db"))
+    store.init_schema()
+
+    _insert_user_envelope_at(
+        store, chat_id=100, body="我今天几点开会?", msg_id=1,
+        when=datetime.now(UTC) - timedelta(hours=1),
+    )
+    late = (datetime.now(UTC) - timedelta(hours=1)).isoformat(
+        timespec="seconds"
+    ).replace("+00:00", "Z")
+    store.messages().insert(Envelope(
+        id=None, ts=late, parent_id=None, source="internal",
+        telegram_chat_id=100, telegram_msg_id=None, received_by_bot=None,
+        from_kind="agent", from_agent="manager", to_agent="user",
+        body="下午两点。",
+    ))
+
+    persona = SupervisorPersona(
+        core="core", dm_mode="dm", pulse_mode="pulse-mode-text",
+        tool_use_guide="tools",
+    )
+    cfg = SupervisorConfig(
+        model="fake", max_tokens_reply=1024, max_tool_iterations=6,
+        transcript_window=10,
+        quiet_threshold_seconds=300, max_wait_seconds=3600, per_tick_limit=200,
+    )
+
+    good_response = json.dumps({
+        "agent": "manager",
+        "envelope_id_from": 1, "envelope_id_to": 2, "envelope_count": 2,
+        "score_helpfulness": 80, "score_correctness": 80,
+        "score_tone": 80, "score_efficiency": 80,
+        "critique_text": "good.",
+        "recommendations": [],
+    })
+    fake_llm = _FakeLLM(next_response=good_response)
+
+    sup = Supervisor(
+        llm=fake_llm, store=store, persona=persona, config=cfg,
+    )
+    asyncio.run(sup.handle(_pulse_env("review_cycle")))
+
+    rs = store.supervisor_reviews()
+    latest = rs.latest_for_agent("manager")
+    assert latest is not None
+    assert latest.score_overall == 80
+    cursor = store.agent_memory("supervisor").get("cursor:manager")
+    assert cursor == 2
+
+
+def test_pulse_review_cycle_skips_when_busy(tmp_path) -> None:
+    from project0.agents.supervisor import (
+        Supervisor, SupervisorConfig, SupervisorPersona,
+    )
+    from project0.store import Store
+
+    store = Store(str(tmp_path / "store.db"))
+    store.init_schema()
+    _insert_user_envelope_now(store, chat_id=100, body="still talking", msg_id=1)
+
+    persona = SupervisorPersona(
+        core="core", dm_mode="dm", pulse_mode="pulse-mode-text",
+        tool_use_guide="tools",
+    )
+    cfg = SupervisorConfig(
+        model="fake", max_tokens_reply=1024, max_tool_iterations=6,
+        transcript_window=10,
+        quiet_threshold_seconds=300, max_wait_seconds=3600, per_tick_limit=200,
+    )
+    fake_llm = _FakeLLM(next_response="unused")
+
+    sup = Supervisor(
+        llm=fake_llm, store=store, persona=persona, config=cfg,
+    )
+    asyncio.run(sup.handle(_pulse_env("review_cycle")))
+
+    assert store.supervisor_reviews().latest_for_agent("manager") is None
+    assert store.agent_memory("supervisor").get("idle_gate:pending_since_ts") is not None
+
+
+def test_pulse_review_retry_noop_when_no_pending(tmp_path) -> None:
+    from project0.agents.supervisor import (
+        Supervisor, SupervisorConfig, SupervisorPersona,
+    )
+    from project0.store import Store
+
+    store = Store(str(tmp_path / "store.db"))
+    store.init_schema()
+
+    persona = SupervisorPersona(
+        core="core", dm_mode="dm", pulse_mode="pulse-mode-text",
+        tool_use_guide="tools",
+    )
+    cfg = SupervisorConfig(
+        model="fake", max_tokens_reply=1024, max_tool_iterations=6,
+        transcript_window=10,
+        quiet_threshold_seconds=300, max_wait_seconds=3600, per_tick_limit=200,
+    )
+    fake_llm = _FakeLLM(next_response="should not be called")
+
+    sup = Supervisor(
+        llm=fake_llm, store=store, persona=persona, config=cfg,
+    )
+    result = asyncio.run(sup.handle(_pulse_env("review_retry")))
+
+    assert result is None
+    assert fake_llm.calls is None
+
+
+def test_pulse_review_cycle_skips_empty_slice(tmp_path) -> None:
+    from project0.agents.supervisor import (
+        Supervisor, SupervisorConfig, SupervisorPersona,
+    )
+    from project0.store import Store
+
+    store = Store(str(tmp_path / "store.db"))
+    store.init_schema()
+
+    persona = SupervisorPersona(
+        core="core", dm_mode="dm", pulse_mode="pulse-mode-text",
+        tool_use_guide="tools",
+    )
+    cfg = SupervisorConfig(
+        model="fake", max_tokens_reply=1024, max_tool_iterations=6,
+        transcript_window=10,
+        quiet_threshold_seconds=300, max_wait_seconds=3600, per_tick_limit=200,
+    )
+    fake_llm = _FakeLLM(next_response="unused")
+
+    sup = Supervisor(
+        llm=fake_llm, store=store, persona=persona, config=cfg,
+    )
+    asyncio.run(sup.handle(_pulse_env("review_cycle")))
+
+    for agent in ("manager", "intelligence", "learning"):
+        assert store.supervisor_reviews().latest_for_agent(agent) is None
+
+
+def test_dm_path_returns_reply_using_dm_persona_section(tmp_path) -> None:
+    from project0.agents.supervisor import (
+        Supervisor, SupervisorConfig, SupervisorPersona,
+    )
+    from project0.store import Store
+
+    store = Store(str(tmp_path / "store.db"))
+    store.init_schema()
+
+    persona = SupervisorPersona(
+        core="CORE",
+        dm_mode="DM_MODE_SECTION",
+        pulse_mode="PULSE_MODE_SECTION",
+        tool_use_guide="TOOLS",
+    )
+    cfg = SupervisorConfig(
+        model="fake", max_tokens_reply=1024, max_tool_iterations=6,
+        transcript_window=10,
+        quiet_threshold_seconds=300, max_wait_seconds=3600, per_tick_limit=200,
+    )
+    fake_llm = _FakeLLM(next_response="欧尼酱好呀~")
+
+    sup = Supervisor(
+        llm=fake_llm, store=store, persona=persona, config=cfg,
+    )
+
+    dm_env = Envelope(
+        id=None, ts="2026-04-17T09:00:00Z", parent_id=None,
+        source="telegram_dm", telegram_chat_id=42, telegram_msg_id=99,
+        received_by_bot="supervisor",
+        from_kind="user", from_agent=None, to_agent="supervisor",
+        body="最近 manager 表现怎么样?",
+        routing_reason="direct_dm",
+    )
+    result = asyncio.run(sup.handle(dm_env))
+    assert result is not None
+    assert result.reply_text is not None and "欧尼酱" in result.reply_text
+
+    assert fake_llm.calls is not None
+    assert len(fake_llm.calls) == 1
+    assert result.delegate_to is None
