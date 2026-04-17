@@ -247,3 +247,72 @@ async def usage(request: Request) -> object:
             recent_rows=recent_rows,
         ),
     )
+
+
+@router.get("/reviews")
+async def reviews(request: Request) -> object:
+    templates = request.app.state.templates
+    store = request.app.state.store
+    reviews_store = store.supervisor_reviews()
+
+    agents = ("manager", "intelligence", "learning")
+    agent_labels = {
+        "manager":      "经理",
+        "intelligence": "情报",
+        "learning":     "书瑶",
+    }
+
+    cards = {a: reviews_store.latest_for_agent(a) for a in agents}
+    history = {a: reviews_store.recent_for_agent(a, limit=30) for a in agents}
+    spark_series = {
+        a: reviews_store.history_spark(agent=a, limit=20) for a in agents
+    }
+
+    chart_series: dict[str, list[tuple[str, int]]] = {
+        a: spark_series[a] for a in agents
+    }
+
+    import json as _json
+    recommendations: dict[str, list[dict]] = {}
+    for a in agents:
+        if cards[a] is None:
+            recommendations[a] = []
+        else:
+            try:
+                recommendations[a] = _json.loads(cards[a].recommendations_json) or []
+            except _json.JSONDecodeError:
+                recommendations[a] = []
+
+    history_recs: dict[str, list[list[dict]]] = {}
+    for a in agents:
+        per_row: list[list[dict]] = []
+        for row in history[a]:
+            try:
+                per_row.append(_json.loads(row.recommendations_json) or [])
+            except _json.JSONDecodeError:
+                per_row.append([])
+        history_recs[a] = per_row
+
+    from project0.control_panel.rendering import (
+        render_score_timeseries_svg,
+        render_sparkline_svg,
+    )
+    chart_svg = render_score_timeseries_svg(chart_series)
+    sparkline_svgs = {
+        a: render_sparkline_svg([s for _, s in spark_series[a]]) for a in agents
+    }
+
+    return templates.TemplateResponse(
+        request, "reviews.html",
+        _ctx(
+            request,
+            agents=agents,
+            agent_labels=agent_labels,
+            cards=cards,
+            history=history,
+            recommendations=recommendations,
+            history_recs=history_recs,
+            chart_svg=chart_svg,
+            sparkline_svgs=sparkline_svgs,
+        ),
+    )

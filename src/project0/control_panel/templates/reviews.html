@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="reviews">
+  <h1>叶霏 的评分面板</h1>
+
+  <section class="review-chart">
+    <h2>近 30 次 review 趋势</h2>
+    {{ chart_svg | safe }}
+  </section>
+
+  <section class="review-cards">
+    {% for agent in agents %}
+      <div class="review-card">
+        <h3>{{ agent_labels[agent] }}</h3>
+        {% if cards[agent] is none %}
+          <p class="empty">叶霏还没评过她呢 ◡̈</p>
+        {% else %}
+          <p class="score-overall">{{ cards[agent].score_overall }}</p>
+          <ul class="rubric">
+            <li>helpfulness: {{ cards[agent].score_helpfulness }}</li>
+            <li>correctness: {{ cards[agent].score_correctness }}</li>
+            <li>tone: {{ cards[agent].score_tone }}</li>
+            <li>efficiency: {{ cards[agent].score_efficiency }}</li>
+          </ul>
+          <div class="spark">{{ sparkline_svgs[agent] | safe }}</div>
+          <p class="critique">{{ cards[agent].critique_text }}</p>
+          {% set recs = recommendations[agent] %}
+          {% if recs %}
+            <p class="top-rec"><strong>建议:</strong> {{ recs[0].summary }}</p>
+          {% else %}
+            <p class="top-rec"><strong>建议:</strong> —</p>
+          {% endif %}
+          <p class="meta">reviewed {{ cards[agent].envelope_count }} envelopes @ {{ cards[agent].ts }}</p>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </section>
+
+  <section class="review-history">
+    {% for agent in agents %}
+      <details>
+        <summary>{{ agent_labels[agent] }} — 历史 ({{ history[agent]|length }})</summary>
+        {% if history[agent] %}
+          <table class="history-table">
+            <thead>
+              <tr>
+                <th>时间</th><th>overall</th><th>H</th><th>C</th><th>T</th><th>E</th><th>envelopes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in history[agent] %}
+                <tr>
+                  <td>{{ row.ts }}</td>
+                  <td>{{ row.score_overall }}</td>
+                  <td>{{ row.score_helpfulness }}</td>
+                  <td>{{ row.score_correctness }}</td>
+                  <td>{{ row.score_tone }}</td>
+                  <td>{{ row.score_efficiency }}</td>
+                  <td>{{ row.envelope_count }}</td>
+                </tr>
+                <tr class="critique-row">
+                  <td colspan="7">
+                    <div class="critique-body">{{ row.critique_text }}</div>
+                    {% if history_recs[agent][loop.index0] %}
+                      <ul class="rec-list">
+                        {% for rec in history_recs[agent][loop.index0] %}
+                          <li><strong>[{{ rec.target }}]</strong> {{ rec.summary }} — {{ rec.detail }}</li>
+                        {% endfor %}
+                      </ul>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="empty">no reviews yet for this agent.</p>
+        {% endif %}
+      </details>
+    {% endfor %}
+  </section>
+</section>
+{% endblock %}
