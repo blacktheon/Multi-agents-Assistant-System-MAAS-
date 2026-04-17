@@ -599,7 +599,9 @@ class Intelligence:
                 limit=self._config.transcript_window,
             )
         return self._messages.recent_for_chat(
-            chat_id=chat_id, limit=self._config.transcript_window
+            chat_id=chat_id,
+            visible_to="intelligence",
+            limit=self._config.transcript_window,
         )
 
     def _assemble_system_blocks(

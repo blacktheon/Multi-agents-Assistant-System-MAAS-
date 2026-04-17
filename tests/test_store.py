@@ -395,7 +395,7 @@ def test_messages_recent_for_chat_returns_in_chronological_order(tmp_path: Path)
     # Another chat to verify isolation.
     store.messages().insert(env(10, "2026-04-13T12:00:07Z", "other-chat", chat_id=999))
 
-    got = store.messages().recent_for_chat(chat_id=500, limit=10)
+    got = store.messages().recent_for_chat(chat_id=500, visible_to="manager", limit=10)
     assert [e.body for e in got] == ["first", "second", "third"]
 
 
@@ -421,7 +421,7 @@ def test_messages_recent_for_chat_respects_limit(tmp_path: Path) -> None:
             routing_reason="default_manager",
         ))
 
-    got = store.messages().recent_for_chat(chat_id=700, limit=3)
+    got = store.messages().recent_for_chat(chat_id=700, visible_to="manager", limit=3)
     assert [e.body for e in got] == ["msg-2", "msg-3", "msg-4"]
 
 
@@ -500,9 +500,9 @@ def test_messages_recent_for_dm_isolates_by_agent(tmp_path: Path) -> None:
     assert "我想你了" not in intel_bodies
     assert "宝贝~" not in intel_bodies
 
-    # Sanity: the old loader still returns everything (this is why the
-    # new method was needed in the first place).
-    everything = store.messages().recent_for_chat(chat_id=USER_ID, limit=20)
+    # Sanity: recent_for_chat with visible_to='secretary' returns all envelopes
+    # for the chat regardless of which agent they belong to.
+    everything = store.messages().recent_for_chat(chat_id=USER_ID, visible_to="secretary", limit=20)
     assert len(everything) == 6
 
 

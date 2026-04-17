@@ -39,7 +39,7 @@ def _mgr(llm, calendar=None, messages_store=None, clock=None, user_tz=None):
 
 
 class _FakeMessagesStore:
-    def recent_for_chat(self, *, chat_id, limit):
+    def recent_for_chat(self, *, chat_id, visible_to, limit):
         return []
 
     def recent_for_dm(self, *, chat_id, agent, limit):

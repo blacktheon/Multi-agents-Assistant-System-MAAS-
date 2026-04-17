@@ -376,7 +376,9 @@ class Secretary:
         across every bot the user opens, so DM transcripts must be
         scoped by (chat_id, agent). See ``_load_dm_transcript``."""
         envs = self._messages.recent_for_chat(
-            chat_id=chat_id, limit=self._config.transcript_window
+            chat_id=chat_id,
+            visible_to="secretary",
+            limit=self._config.transcript_window,
         )
         return self._format_transcript(envs)
 

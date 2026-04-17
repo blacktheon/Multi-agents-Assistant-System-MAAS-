@@ -340,24 +340,41 @@ class MessagesStore:
             result.append(env)
         return result
 
-    def recent_for_chat(self, *, chat_id: int, limit: int) -> list[Envelope]:
+    def recent_for_chat(
+        self, *, chat_id: int, visible_to: str, limit: int
+    ) -> list[Envelope]:
         """Return the most recent envelopes for a single Telegram chat,
         oldest-first. Used by agents loading transcript context in GROUP
         chats, where all agents and the user share one context.
+
+        ``visible_to`` is REQUIRED and enforces Secretary-history isolation:
+        when ``visible_to != 'secretary'``, envelopes with ``from_agent =
+        'secretary'`` or ``to_agent = 'secretary'`` are filtered out. See
+        docs/superpowers/specs/2026-04-17-supervisor-agent-design.md §6.
 
         DO NOT use this for DM context — Telegram reuses a single
         chat_id (the user's user_id) across every bot the user DMs, so
         the same chat_id bucket holds conversations with every agent.
         Use ``recent_for_dm`` instead."""
-        rows = self._conn.execute(
+        if visible_to == "secretary":
+            sql = """
+                SELECT id, envelope_json FROM messages
+                WHERE telegram_chat_id = ?
+                ORDER BY id DESC
+                LIMIT ?
             """
-            SELECT id, envelope_json FROM messages
-            WHERE telegram_chat_id = ?
-            ORDER BY id DESC
-            LIMIT ?
-            """,
-            (chat_id, limit),
-        ).fetchall()
+            params: tuple = (chat_id, limit)
+        else:
+            sql = """
+                SELECT id, envelope_json FROM messages
+                WHERE telegram_chat_id = ?
+                  AND (from_agent IS NULL OR from_agent != 'secretary')
+                  AND to_agent != 'secretary'
+                ORDER BY id DESC
+                LIMIT ?
+            """
+            params = (chat_id, limit)
+        rows = self._conn.execute(sql, params).fetchall()
         result: list[Envelope] = []
         for r in rows:
             env = Envelope.from_json(r["envelope_json"])

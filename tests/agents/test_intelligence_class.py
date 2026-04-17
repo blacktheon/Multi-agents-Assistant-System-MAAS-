@@ -88,7 +88,7 @@ def _valid_report_dict(date_str: str = "2026-04-15") -> dict:
 
 class _StubMessagesStore:
     """Minimal MessagesStore stand-in returning an empty transcript."""
-    def recent_for_chat(self, *, chat_id: int, limit: int) -> list[Envelope]:
+    def recent_for_chat(self, *, chat_id: int, visible_to: str, limit: int) -> list[Envelope]:
         return []
 
     def recent_for_dm(self, *, chat_id: int, agent: str, limit: int) -> list[Envelope]:

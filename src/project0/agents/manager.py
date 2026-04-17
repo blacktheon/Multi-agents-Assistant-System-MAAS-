@@ -496,7 +496,9 @@ class Manager:
             )
         else:
             envs = self._messages.recent_for_chat(
-                chat_id=chat_id, limit=self._config.transcript_window
+                chat_id=chat_id,
+                visible_to="manager",
+                limit=self._config.transcript_window,
             )
         lines: list[str] = []
         for e in envs:
