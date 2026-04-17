@@ -148,3 +148,80 @@ RUBRIC_WEIGHTS: dict[str, float] = {
 
 
 REVIEWED_AGENTS: tuple[str, ...] = ("manager", "intelligence", "learning")
+
+
+# --- idle gate --------------------------------------------------------------
+
+@dataclass(frozen=True)
+class GateResult:
+    is_quiet: bool
+    should_run: bool
+    forced_after_cap: bool = False
+
+
+class IdleGate:
+    """Checks whether Supervisor should run a review right now.
+
+    Quiet = no user-originated envelope in the last ``quiet_threshold_seconds``.
+    If not quiet, the gate records ``idle_gate:pending_since_ts`` on the
+    agent's private memory so a subsequent ``review_retry`` pulse can pick up
+    where we left off and so the max-wait cap is enforced across process
+    restarts.
+
+    Activity scope: only ``from_kind='user'`` envelopes count. Agent-to-agent
+    internal chatter, listener observations, and pulses do not count as
+    activity (see spec §3.2).
+    """
+
+    def __init__(
+        self,
+        *,
+        messages_store: "MessagesStore",
+        memory: "AgentMemory",
+        quiet_threshold_seconds: int,
+        max_wait_seconds: int,
+    ) -> None:
+        self._messages = messages_store
+        self._memory = memory
+        self._quiet = quiet_threshold_seconds
+        self._max_wait = max_wait_seconds
+
+    def check(self, *, now: datetime) -> GateResult:
+        cutoff = now - timedelta(seconds=self._quiet)
+        cutoff_iso = cutoff.astimezone(UTC).isoformat(
+            timespec="seconds"
+        ).replace("+00:00", "Z")
+        is_quiet = not self._messages.has_user_activity_since(cutoff_iso)
+
+        pending = self._memory.get("idle_gate:pending_since_ts")
+
+        if is_quiet:
+            return GateResult(is_quiet=True, should_run=True)
+
+        if pending is None:
+            self._memory.set(
+                "idle_gate:pending_since_ts",
+                now.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            )
+            return GateResult(is_quiet=False, should_run=False)
+
+        try:
+            pending_dt = datetime.fromisoformat(str(pending).replace("Z", "+00:00"))
+        except ValueError:
+            # Corrupt memory value — reset and treat as "just started".
+            self._memory.set(
+                "idle_gate:pending_since_ts",
+                now.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            )
+            return GateResult(is_quiet=False, should_run=False)
+
+        elapsed = (now - pending_dt).total_seconds()
+        if elapsed >= self._max_wait:
+            return GateResult(is_quiet=False, should_run=True, forced_after_cap=True)
+        return GateResult(is_quiet=False, should_run=False)
+
+    def clear_pending(self) -> None:
+        self._memory.delete("idle_gate:pending_since_ts")
+
+    def has_pending(self) -> bool:
+        return self._memory.get("idle_gate:pending_since_ts") is not None

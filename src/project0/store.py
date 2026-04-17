@@ -470,6 +470,21 @@ class MessagesStore:
         "manager", "intelligence", "learning",
     })
 
+    def has_user_activity_since(self, cutoff_iso: str) -> bool:
+        """Return True iff any user-originated envelope exists with
+        ``ts > cutoff_iso``. Used by Supervisor's idle gate to decide
+        whether to postpone a review until the chat goes quiet.
+
+        Activity scope: ``from_kind='user'`` only. Agent-to-agent internal
+        chatter, listener observations, and pulses do not count.
+        """
+        row = self._conn.execute(
+            "SELECT 1 FROM messages "
+            "WHERE from_kind = 'user' AND ts > ? LIMIT 1",
+            (cutoff_iso,),
+        ).fetchone()
+        return row is not None
+
     def envelopes_for_review(
         self, *, agent: str, after_id: int, limit: int = 200
     ) -> list[Envelope]:
