@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from project0.store import Store, SupervisorReviewRow
 
 
@@ -147,19 +145,21 @@ def test_insert_is_idempotent_on_envelope_id_to(tmp_path) -> None:
     rs = store.supervisor_reviews()
 
     first_id = rs.insert(_row(agent="manager", envelope_id_to=50, score_overall=70))
-    # Same agent, same envelope_id_to — should return the existing id, not insert.
+    # Same agent, same envelope_id_to — idempotent, returns existing id.
     second_id = rs.insert(_row(agent="manager", envelope_id_to=50, score_overall=99))
     assert second_id == first_id
 
-    # Same agent, LOWER envelope_id_to (already covered) — also no new insert.
+    # Same agent, LOWER envelope_id_to — NOT a duplicate; legitimate new row.
+    # This covers scenarios like an on-demand review of a historical window or
+    # a cursor-corruption recovery — surface it rather than hiding it.
     third_id = rs.insert(_row(agent="manager", envelope_id_to=40, score_overall=99))
-    assert third_id == first_id
+    assert third_id != first_id
 
     # Same agent, HIGHER envelope_id_to — new insert.
     fourth_id = rs.insert(_row(agent="manager", envelope_id_to=60, score_overall=50))
     assert fourth_id != first_id
+    assert fourth_id != third_id
 
     # Different agent, same envelope_id_to — new insert.
     fifth_id = rs.insert(_row(agent="intelligence", envelope_id_to=50, score_overall=50))
     assert fifth_id != first_id
-    assert fifth_id != fourth_id

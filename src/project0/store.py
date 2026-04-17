@@ -1032,14 +1032,23 @@ class SupervisorReviewRow:
     trigger: str
 
 
-class SupervisorReviewsStore:
-    """Append-mostly store for Supervisor review rows.
+_SUPERVISOR_REVIEWS_COLUMNS = (
+    "id, ts, agent, envelope_id_from, envelope_id_to, envelope_count, "
+    "score_overall, score_helpfulness, score_correctness, "
+    "score_tone, score_efficiency, critique_text, "
+    "recommendations_json, trigger"
+)
 
-    One row per (agent, review window). ``insert`` is idempotent on
-    ``(agent, envelope_id_to)``: if the agent already has a row whose
-    ``envelope_id_to >= row.envelope_id_to``, the existing row's id is
-    returned instead of inserting a duplicate.  This prevents duplicate
-    reviews on process-restart mid-tick.
+
+class SupervisorReviewsStore:
+    """Append-only store for Supervisor review rows.
+
+    One row per (agent, review window). Inserts are idempotent on
+    (agent, envelope_id_to): re-inserting the exact same window for an
+    agent returns the existing id. A row with a different envelope_id_to
+    (higher or lower) is a legitimate new review — bugs, cursor corruption,
+    or on-demand reviews of historical windows should surface, not be
+    silently swallowed.
     """
 
     def __init__(self, conn: sqlite3.Connection) -> None:
@@ -1048,17 +1057,12 @@ class SupervisorReviewsStore:
     def insert(self, row: SupervisorReviewRow) -> int:
         """Insert a new review row and return its id.
 
-        If the same agent already has a row with ``envelope_id_to >=
-        row.envelope_id_to``, return that existing row's id without
-        inserting.
+        If the same agent already has a row with the exact same
+        ``envelope_id_to``, return that existing row's id without inserting.
         """
         existing = self._conn.execute(
-            """
-            SELECT id FROM supervisor_reviews
-            WHERE agent = ? AND envelope_id_to >= ?
-            ORDER BY envelope_id_to DESC
-            LIMIT 1
-            """,
+            "SELECT id FROM supervisor_reviews "
+            "WHERE agent = ? AND envelope_id_to = ? LIMIT 1",
             (row.agent, row.envelope_id_to),
         ).fetchone()
         if existing is not None:
@@ -1095,12 +1099,10 @@ class SupervisorReviewsStore:
     def latest_for_agent(self, agent: str) -> SupervisorReviewRow | None:
         """Return the most recent review row for ``agent``, or None."""
         row = self._conn.execute(
-            """
-            SELECT * FROM supervisor_reviews
-            WHERE agent = ?
-            ORDER BY ts DESC, id DESC
-            LIMIT 1
-            """,
+            f"SELECT {_SUPERVISOR_REVIEWS_COLUMNS} FROM supervisor_reviews "
+            "WHERE agent = ? "
+            "ORDER BY ts DESC, id DESC "
+            "LIMIT 1",
             (agent,),
         ).fetchone()
         if row is None:
@@ -1112,12 +1114,10 @@ class SupervisorReviewsStore:
     ) -> list[SupervisorReviewRow]:
         """Return the most recent ``limit`` reviews for ``agent``, newest-first."""
         rows = self._conn.execute(
-            """
-            SELECT * FROM supervisor_reviews
-            WHERE agent = ?
-            ORDER BY ts DESC, id DESC
-            LIMIT ?
-            """,
+            f"SELECT {_SUPERVISOR_REVIEWS_COLUMNS} FROM supervisor_reviews "
+            "WHERE agent = ? "
+            "ORDER BY ts DESC, id DESC "
+            "LIMIT ?",
             (agent, limit),
         ).fetchall()
         return [self._row(r) for r in rows]
@@ -1129,6 +1129,9 @@ class SupervisorReviewsStore:
 
         Intended for rendering a sparkline chart.
         """
+        # Subquery: select the newest-N rows (DESC + LIMIT), then return them
+        # oldest-first for the sparkline. A plain ORDER BY ts ASC LIMIT would
+        # select the oldest N rows instead — wrong for a recency view.
         rows = self._conn.execute(
             """
             SELECT ts, score_overall FROM (
@@ -1145,16 +1148,15 @@ class SupervisorReviewsStore:
     def all_recent(self, limit: int = 90) -> list[SupervisorReviewRow]:
         """Return the most recent ``limit`` reviews across all agents, newest-first."""
         rows = self._conn.execute(
-            """
-            SELECT * FROM supervisor_reviews
-            ORDER BY ts DESC, id DESC
-            LIMIT ?
-            """,
+            f"SELECT {_SUPERVISOR_REVIEWS_COLUMNS} FROM supervisor_reviews "
+            "ORDER BY ts DESC, id DESC "
+            "LIMIT ?",
             (limit,),
         ).fetchall()
         return [self._row(r) for r in rows]
 
-    def _row(self, r: sqlite3.Row) -> SupervisorReviewRow:
+    @staticmethod
+    def _row(r: sqlite3.Row) -> SupervisorReviewRow:
         return SupervisorReviewRow(
             id=int(r["id"]),
             ts=str(r["ts"]),
