@@ -119,6 +119,25 @@ CREATE TABLE IF NOT EXISTS review_schedule (
     is_active       INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS ix_review_schedule_next ON review_schedule(next_review);
+
+CREATE TABLE IF NOT EXISTS supervisor_reviews (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts                   TEXT    NOT NULL,
+    agent                TEXT    NOT NULL,
+    envelope_id_from     INTEGER NOT NULL,
+    envelope_id_to       INTEGER NOT NULL,
+    envelope_count       INTEGER NOT NULL,
+    score_overall        INTEGER NOT NULL,
+    score_helpfulness    INTEGER NOT NULL,
+    score_correctness    INTEGER NOT NULL,
+    score_tone           INTEGER NOT NULL,
+    score_efficiency     INTEGER NOT NULL,
+    critique_text        TEXT    NOT NULL,
+    recommendations_json TEXT    NOT NULL,
+    trigger              TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_supervisor_reviews_agent_ts
+    ON supervisor_reviews(agent, ts);
 """
 
 
@@ -199,6 +218,9 @@ class Store:
 
     def review_schedule(self) -> ReviewScheduleStore:
         return ReviewScheduleStore(self._conn)
+
+    def supervisor_reviews(self) -> SupervisorReviewsStore:
+        return SupervisorReviewsStore(self._conn)
 
 
 class AgentMemory:
@@ -987,4 +1009,165 @@ class ReviewScheduleStore:
         self._conn.execute(
             "DELETE FROM review_schedule WHERE notion_page_id = ?",
             (notion_page_id,),
+        )
+
+
+@dataclass(frozen=True)
+class SupervisorReviewRow:
+    """One row in supervisor_reviews — one review window for one agent."""
+
+    id: int
+    ts: str
+    agent: str
+    envelope_id_from: int
+    envelope_id_to: int
+    envelope_count: int
+    score_overall: int
+    score_helpfulness: int
+    score_correctness: int
+    score_tone: int
+    score_efficiency: int
+    critique_text: str
+    recommendations_json: str
+    trigger: str
+
+
+class SupervisorReviewsStore:
+    """Append-mostly store for Supervisor review rows.
+
+    One row per (agent, review window). ``insert`` is idempotent on
+    ``(agent, envelope_id_to)``: if the agent already has a row whose
+    ``envelope_id_to >= row.envelope_id_to``, the existing row's id is
+    returned instead of inserting a duplicate.  This prevents duplicate
+    reviews on process-restart mid-tick.
+    """
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def insert(self, row: SupervisorReviewRow) -> int:
+        """Insert a new review row and return its id.
+
+        If the same agent already has a row with ``envelope_id_to >=
+        row.envelope_id_to``, return that existing row's id without
+        inserting.
+        """
+        existing = self._conn.execute(
+            """
+            SELECT id FROM supervisor_reviews
+            WHERE agent = ? AND envelope_id_to >= ?
+            ORDER BY envelope_id_to DESC
+            LIMIT 1
+            """,
+            (row.agent, row.envelope_id_to),
+        ).fetchone()
+        if existing is not None:
+            return int(existing["id"])
+
+        cur = self._conn.execute(
+            """
+            INSERT INTO supervisor_reviews (
+                ts, agent, envelope_id_from, envelope_id_to, envelope_count,
+                score_overall, score_helpfulness, score_correctness,
+                score_tone, score_efficiency,
+                critique_text, recommendations_json, trigger
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row.ts,
+                row.agent,
+                row.envelope_id_from,
+                row.envelope_id_to,
+                row.envelope_count,
+                row.score_overall,
+                row.score_helpfulness,
+                row.score_correctness,
+                row.score_tone,
+                row.score_efficiency,
+                row.critique_text,
+                row.recommendations_json,
+                row.trigger,
+            ),
+        )
+        assert cur.lastrowid is not None
+        return int(cur.lastrowid)
+
+    def latest_for_agent(self, agent: str) -> SupervisorReviewRow | None:
+        """Return the most recent review row for ``agent``, or None."""
+        row = self._conn.execute(
+            """
+            SELECT * FROM supervisor_reviews
+            WHERE agent = ?
+            ORDER BY ts DESC, id DESC
+            LIMIT 1
+            """,
+            (agent,),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row(row)
+
+    def recent_for_agent(
+        self, agent: str, limit: int = 10
+    ) -> list[SupervisorReviewRow]:
+        """Return the most recent ``limit`` reviews for ``agent``, newest-first."""
+        rows = self._conn.execute(
+            """
+            SELECT * FROM supervisor_reviews
+            WHERE agent = ?
+            ORDER BY ts DESC, id DESC
+            LIMIT ?
+            """,
+            (agent, limit),
+        ).fetchall()
+        return [self._row(r) for r in rows]
+
+    def history_spark(
+        self, *, agent: str, limit: int = 20
+    ) -> list[tuple[str, int]]:
+        """Return ``(ts, score_overall)`` pairs for ``agent``, oldest-first.
+
+        Intended for rendering a sparkline chart.
+        """
+        rows = self._conn.execute(
+            """
+            SELECT ts, score_overall FROM (
+                SELECT ts, score_overall, id FROM supervisor_reviews
+                WHERE agent = ?
+                ORDER BY ts DESC, id DESC
+                LIMIT ?
+            ) ORDER BY ts ASC, id ASC
+            """,
+            (agent, limit),
+        ).fetchall()
+        return [(str(r["ts"]), int(r["score_overall"])) for r in rows]
+
+    def all_recent(self, limit: int = 50) -> list[SupervisorReviewRow]:
+        """Return the most recent ``limit`` reviews across all agents, newest-first."""
+        rows = self._conn.execute(
+            """
+            SELECT * FROM supervisor_reviews
+            ORDER BY ts DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [self._row(r) for r in rows]
+
+    def _row(self, r: sqlite3.Row) -> SupervisorReviewRow:
+        return SupervisorReviewRow(
+            id=int(r["id"]),
+            ts=str(r["ts"]),
+            agent=str(r["agent"]),
+            envelope_id_from=int(r["envelope_id_from"]),
+            envelope_id_to=int(r["envelope_id_to"]),
+            envelope_count=int(r["envelope_count"]),
+            score_overall=int(r["score_overall"]),
+            score_helpfulness=int(r["score_helpfulness"]),
+            score_correctness=int(r["score_correctness"]),
+            score_tone=int(r["score_tone"]),
+            score_efficiency=int(r["score_efficiency"]),
+            critique_text=str(r["critique_text"]),
+            recommendations_json=str(r["recommendations_json"]),
+            trigger=str(r["trigger"]),
         )
