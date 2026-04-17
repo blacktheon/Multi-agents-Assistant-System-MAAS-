@@ -146,3 +146,51 @@ def test_envelopes_for_review_rejects_unknown_agent(tmp_path) -> None:
     msgs = store.messages()
     with pytest.raises(ValueError, match="unknown reviewable agent"):
         msgs.envelopes_for_review(agent="nobody", after_id=0, limit=50)
+
+
+def test_envelopes_for_review_excludes_pulses(tmp_path) -> None:
+    """Pulse envelopes (scheduler wake-ups) and system-originated messages
+    must be filtered out of the review window — they are plumbing, not
+    reviewable conversation."""
+    store = Store(str(tmp_path / "store.db"))
+    store.init_schema()
+    msgs = store.messages()
+
+    now = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+    # 1. A real user message to manager — should be included.
+    msgs.insert(Envelope(
+        id=None, ts=now, parent_id=None,
+        source="telegram_group", telegram_chat_id=100,
+        telegram_msg_id=1, received_by_bot=None,
+        from_kind="user", from_agent=None, to_agent="manager",
+        body="明天几点开会",
+    ))
+
+    # 2. A pulse envelope FOR manager — should be excluded.
+    msgs.insert(Envelope(
+        id=None, ts=now, parent_id=None,
+        source="pulse", telegram_chat_id=None,
+        telegram_msg_id=None, received_by_bot=None,
+        from_kind="system", from_agent=None, to_agent="manager",
+        body="check_calendar",
+        routing_reason="pulse",
+        payload={"pulse_name": "check_calendar"},
+    ))
+
+    # 3. Manager's reply to the user — should be included.
+    msgs.insert(Envelope(
+        id=None, ts=now, parent_id=None,
+        source="internal", telegram_chat_id=100,
+        telegram_msg_id=None, received_by_bot=None,
+        from_kind="agent", from_agent="manager", to_agent="user",
+        body="下午两点",
+    ))
+
+    got = msgs.envelopes_for_review(agent="manager", after_id=0, limit=50)
+    bodies = [e.body for e in got]
+    assert "明天几点开会" in bodies
+    assert "下午两点" in bodies
+    assert "check_calendar" not in bodies
+    # Exactly two should be returned (not three).
+    assert len(got) == 2

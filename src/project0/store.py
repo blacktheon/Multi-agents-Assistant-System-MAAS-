@@ -495,6 +495,18 @@ class MessagesStore:
         Rejects ``agent='secretary'`` and any unknown name — defense in
         depth so a future code path cannot accidentally ask Supervisor to
         inspect Secretary. See design spec §6.5.
+
+        Filtering rationale: scheduler-generated pulse wake-ups
+        (``source='pulse'``) and other system-originated envelopes
+        (``from_kind='system'``) are internal plumbing that agents handle
+        silently. Including them in the review window causes Supervisor to
+        penalise agents for "not responding" to ``notion_sync`` /
+        ``check_calendar`` / ``review_reminder`` pulses — artefacts, not
+        real conversation. Both filters are applied as belt-and-suspenders:
+        every pulse today carries both markers, but future system envelopes
+        that lack ``source='pulse'`` are also excluded by ``from_kind``.
+        Pulses remain in the messages table for audit; they are simply
+        outside the review scope.
         """
         if agent == "secretary":
             raise ValueError(
@@ -508,6 +520,8 @@ class MessagesStore:
             SELECT id, envelope_json FROM messages
             WHERE id > ?
               AND (to_agent = ? OR from_agent = ?)
+              AND source != 'pulse'
+              AND from_kind != 'system'
             ORDER BY id ASC
             LIMIT ?
             """,
