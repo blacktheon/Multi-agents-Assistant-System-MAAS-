@@ -440,7 +440,7 @@ class Supervisor:
     async def handle(self, env: Envelope) -> AgentResult | None:
         if env.routing_reason == "pulse":
             return await self._handle_pulse(env)
-        if env.routing_reason in ("direct_dm", "mention"):
+        if env.routing_reason in ("direct_dm", "mention", "focus"):
             return await self._handle_chat(env)
         log.debug("supervisor: ignoring routing_reason=%s", env.routing_reason)
         return None

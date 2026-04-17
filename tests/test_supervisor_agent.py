@@ -581,6 +581,51 @@ def test_mention_in_group_routes_to_chat_path(tmp_path) -> None:
     assert fake_llm.calls[0]["purpose"] == "chat_reply"
 
 
+def test_focus_followup_routes_to_chat_path(tmp_path) -> None:
+    """After a mention sets focus to supervisor, follow-up messages arrive
+    with routing_reason='focus' — must still reach the chat path, not the
+    None fallback."""
+    from project0.agents.supervisor import (
+        Supervisor, SupervisorConfig, SupervisorPersona,
+    )
+    from project0.store import Store
+
+    store = Store(str(tmp_path / "store.db"))
+    store.init_schema()
+
+    persona = SupervisorPersona(
+        core="CORE",
+        dm_mode="DM_MODE_SECTION",
+        pulse_mode="PULSE_MODE_SECTION",
+        tool_use_guide="TOOLS",
+    )
+    cfg = SupervisorConfig(
+        model="fake", max_tokens_reply=1024, max_tool_iterations=6,
+        transcript_window=10,
+        quiet_threshold_seconds=300, max_wait_seconds=3600, per_tick_limit=200,
+    )
+    fake_llm = _FakeLLM(next_response="欧尼酱我在听呢~")
+
+    sup = Supervisor(
+        llm=fake_llm, store=store, persona=persona, config=cfg,
+    )
+
+    focus_env = Envelope(
+        id=None, ts="2026-04-18T02:35:00Z", parent_id=None,
+        source="telegram_group", telegram_chat_id=-100, telegram_msg_id=50,
+        received_by_bot="supervisor",
+        from_kind="user", from_agent=None, to_agent="supervisor",
+        body="最近manager姐姐表现怎么样？",
+        routing_reason="focus",
+    )
+    result = asyncio.run(sup.handle(focus_env))
+    assert result is not None
+    assert result.reply_text is not None
+    assert "欧尼酱" in result.reply_text
+    assert fake_llm.calls is not None
+    assert fake_llm.calls[0]["purpose"] == "chat_reply"
+
+
 def test_pulse_path_uses_pulse_mode_not_dm_mode(tmp_path) -> None:
     """Mirror test: pulse-mode review must include pulse_mode but never dm_mode."""
     from project0.agents.supervisor import (
