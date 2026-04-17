@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from project0.envelope import AgentResult, Envelope
+from project0.llm.provider import Msg
 
 if TYPE_CHECKING:
     from project0.llm.provider import LLMProvider
@@ -229,9 +230,6 @@ class IdleGate:
 
 # --- review engine ----------------------------------------------------------
 
-from project0.llm.provider import Msg
-
-
 _REVIEW_SYSTEM_SUFFIX = """
 你必须只输出一个 JSON 对象, 不要添加任何 Markdown 围栏或注释。JSON 必须严格包含以下字段:
 - agent: 字符串, "manager" / "intelligence" / "learning" 之一
@@ -305,7 +303,7 @@ class ReviewEngine:
             log.exception("review: llm call failed for agent=%s", agent)
             return None
 
-        parsed = self._parse_and_validate(raw, agent=agent, envelopes=envelopes)
+        parsed = self._parse_and_validate(raw, agent=agent)
         if parsed is None:
             return None
 
@@ -344,7 +342,7 @@ class ReviewEngine:
 
     @staticmethod
     def _parse_and_validate(
-        raw: str, *, agent: str, envelopes: list[Envelope]
+        raw: str, *, agent: str
     ) -> dict[str, Any] | None:
         text = raw.strip()
         if text.startswith("```"):
