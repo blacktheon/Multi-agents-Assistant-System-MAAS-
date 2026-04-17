@@ -381,6 +381,32 @@ async def _run(settings: Settings) -> None:
     register_learning(learning.handle)
     log.info("learning registered (model=%s)", learning_cfg.model)
 
+    # --- Supervisor agent (叶霏) ---------------------------------------------
+    from project0.agents.supervisor import (
+        Supervisor,
+        load_supervisor_config,
+        load_supervisor_persona,
+    )
+    from project0.agents.registry import register_supervisor
+
+    supervisor_persona = load_supervisor_persona(Path("prompts/supervisor.md"))
+    supervisor_cfg = load_supervisor_config(Path("prompts/supervisor.toml"))
+
+    supervisor = Supervisor(
+        llm=llm,
+        store=store,
+        persona=supervisor_persona,
+        config=supervisor_cfg,
+    )
+    register_supervisor(supervisor.handle)
+    log.info("supervisor registered (model=%s)", supervisor_cfg.model)
+
+    supervisor_pulse_entries = load_pulse_entries(Path("prompts/supervisor.toml"))
+    log.info(
+        "supervisor pulse entries: %s",
+        [(e.name, e.every_seconds) for e in supervisor_pulse_entries],
+    )
+
     # Pulse scheduler entries for Manager.
     pulse_entries = load_pulse_entries(Path("prompts/manager.toml"))
     log.info(
@@ -462,6 +488,16 @@ async def _run(settings: Settings) -> None:
                 run_pulse_loop(
                     entry=entry,
                     target_agent="learning",
+                    orchestrator=orch,
+                )
+            )
+            log.info("pulse task spawned: %s", entry.name)
+
+        for entry in supervisor_pulse_entries:
+            tg.create_task(
+                run_pulse_loop(
+                    entry=entry,
+                    target_agent="supervisor",
                     orchestrator=orch,
                 )
             )
