@@ -247,6 +247,15 @@ _REVIEW_SYSTEM_SUFFIX = """
 - score_helpfulness, score_correctness, score_tone, score_efficiency: 整数, 0-100
 - critique_text: 中文, 2-5 句, 无 Markdown
 - recommendations: 数组, 0 到 3 条, 每条 {target, summary, detail}
+
+**极其重要——字符串内的引号规则**:
+- critique_text, recommendations[*].summary, recommendations[*].detail 这些字符串里,
+  **禁止**使用 ASCII 双引号 `"` 和 ASCII 单引号 `'`——它们会让 JSON 解析失败。
+- 要引用某一条 envelope 的原文或某个术语时, **必须**用中文弯引号「」或『』, 不要用 `"` 也不要用 `"`。
+- 要引用某个字段名或代码标识时, 用反引号 `` ` `` 或者直接不加引号。
+- 例如错误: `"critique_text":"她说"暂时不便回答"占用了信道"`
+  正确:     `"critique_text":"她说「暂时不便回答」占用了信道"`
+
 任何其他字段、任何多于 3 条的 recommendations、任何 0-100 范围外的分数, 都视为错误。
 """
 
