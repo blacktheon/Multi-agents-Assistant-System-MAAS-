@@ -31,6 +31,7 @@ if TYPE_CHECKING:
         AgentMemory,
         MessagesStore,
     )
+    from project0.telegram_io import BotSender
 
 log = logging.getLogger(__name__)
 
@@ -502,6 +503,25 @@ class Supervisor:
             max_wait_seconds=config.max_wait_seconds,
         )
         self._tool_specs = self._build_tool_specs()
+        self._sender: "BotSender | None" = None
+        self._current_chat_id: int | None = None
+
+    def set_sender(self, sender: "BotSender") -> None:
+        """Injected after the real Telegram bot applications are built."""
+        self._sender = sender
+
+    async def _notify(self, chat_id: int | None, text: str) -> None:
+        """Best-effort status notification. Silent no-op if sender not
+        injected or chat_id is None. Failures swallowed — the main work
+        must not be blocked by a status message."""
+        if self._sender is None or chat_id is None:
+            return
+        try:
+            await self._sender.send(
+                agent="supervisor", chat_id=chat_id, text=text,
+            )
+        except Exception:
+            log.exception("supervisor: _notify failed; continuing")
 
     def _build_tool_specs(self) -> list[ToolSpec]:
         return [
@@ -548,6 +568,10 @@ class Supervisor:
                     return "不能评审 Secretary — 她不在我的视野里。", True
                 if agent not in REVIEWED_AGENTS:
                     return f"unknown agent: {agent!r}", True
+                await self._notify(
+                    self._current_chat_id,
+                    f"（稍等，叶霏这就去给 {agent} 姐姐跑一次评审，读 envelope 可能要半分钟~）",
+                )
                 outcome = await self._run_review_for_agent(
                     agent, trigger="on_demand"
                 )
@@ -572,6 +596,10 @@ class Supervisor:
                 return self._format_review_row(outcome.row), False
 
             if name == "run_review_all":
+                await self._notify(
+                    self._current_chat_id,
+                    "（稍等，叶霏要把三位姐姐都过一遍，每个人都要好几秒，整体大概一两分钟~）",
+                )
                 results = []
                 for agent in REVIEWED_AGENTS:
                     outcome = await self._run_review_for_agent(
@@ -732,6 +760,13 @@ class Supervisor:
     # --- chat path (DM + group mention) -------------------------------------
 
     async def _handle_chat(self, env: Envelope) -> AgentResult | None:
+        self._current_chat_id = env.telegram_chat_id
+        try:
+            return await self._handle_chat_inner(env)
+        finally:
+            self._current_chat_id = None
+
+    async def _handle_chat_inner(self, env: Envelope) -> AgentResult | None:
         system = (
             self._persona.core
             + "\n\n"

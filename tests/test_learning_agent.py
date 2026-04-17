@@ -281,3 +281,130 @@ async def test_handle_routing_unknown_reason(
     )
     result = await agent.handle(env)
     assert result is None
+
+
+# --- placeholder notification tests ------------------------------------------
+
+import asyncio
+from datetime import UTC, datetime, timedelta
+
+from project0.llm.tools import ToolCall, ToolUseResult
+
+
+class _CaptureSender:
+    def __init__(self):
+        self.sent: list[dict] = []
+
+    async def send(self, *, agent: str, chat_id: int, text: str) -> None:
+        self.sent.append({"agent": agent, "chat_id": chat_id, "text": text})
+
+
+def _make_agent_with_fake_notion(
+    knowledge_index: KnowledgeIndexStore,
+    review_schedule: ReviewScheduleStore,
+    fake_notion,
+    fake_llm,
+):
+    from project0.agents.learning import LearningAgent, load_learning_config, load_learning_persona
+    persona = load_learning_persona(PROMPTS_DIR / "learning.md")
+    config = load_learning_config(PROMPTS_DIR / "learning.toml")
+    return LearningAgent(
+        llm=fake_llm,
+        notion=fake_notion,
+        knowledge_index=knowledge_index,
+        review_schedule=review_schedule,
+        messages_store=None,
+        persona=persona,
+        config=config,
+    )
+
+
+def test_process_text_sends_placeholder(
+    knowledge_index: KnowledgeIndexStore,
+    review_schedule: ReviewScheduleStore,
+) -> None:
+    """process_text must send a 'please wait' placeholder before the LLM call."""
+    from project0.agents.learning import LearningAgent, load_learning_config, load_learning_persona
+    from project0.notion.model import KnowledgeEntry
+
+    persona = load_learning_persona(PROMPTS_DIR / "learning.md")
+    config = load_learning_config(PROMPTS_DIR / "learning.toml")
+
+    summary_response = json.dumps({
+        "title": "Test Title",
+        "summary": "Test summary.",
+        "tags": ["test"],
+    })
+
+    class _FakeLLM:
+        def __init__(self):
+            self.n = 0
+        async def complete(self, **kw):
+            return summary_response
+        async def complete_with_tools(self, *, system, messages, tools,
+                                      max_tokens, agent, purpose, envelope_id=None):
+            self.n += 1
+            if self.n == 1:
+                return ToolUseResult(
+                    kind="tool_use", text=None,
+                    tool_calls=[ToolCall(id="c1", name="process_text",
+                                         input={"text": "some content to save"})],
+                )
+            return ToolUseResult(kind="text", text="好的少爷，已整理好了~", tool_calls=[])
+
+    fake_entry = KnowledgeEntry(
+        page_id="page-abc",
+        title="Test Title",
+        body="Test summary.",
+        source_url=None,
+        source_type="text",
+        tags=["test"],
+        user_notes=None,
+        status="active",
+        created_at=datetime(2026, 4, 18, tzinfo=UTC),
+        last_edited=datetime(2026, 4, 18, tzinfo=UTC),
+    )
+
+    class _FakeNotion:
+        async def create_page(self, **kw):
+            return fake_entry
+
+    agent = LearningAgent(
+        llm=_FakeLLM(),
+        notion=_FakeNotion(),
+        knowledge_index=knowledge_index,
+        review_schedule=review_schedule,
+        messages_store=None,
+        persona=persona,
+        config=config,
+    )
+
+    sender = _CaptureSender()
+    agent.set_sender(sender)
+
+    env = Envelope(
+        id=None, ts="2026-04-18T04:00:00Z", parent_id=None,
+        source="telegram_group", telegram_chat_id=77, telegram_msg_id=10,
+        received_by_bot="learning",
+        from_kind="user", from_agent=None, to_agent="learning",
+        body="帮我整理这段内容",
+        routing_reason="mention",
+    )
+    asyncio.run(agent.handle(env))
+
+    assert len(sender.sent) >= 1
+    first = sender.sent[0]
+    assert first["agent"] == "learning"
+    assert first["chat_id"] == 77
+    assert "等一下" in first["text"] or "稍等" in first["text"]
+
+
+def test_notify_without_sender_is_silent_learning(
+    knowledge_index: KnowledgeIndexStore,
+    review_schedule: ReviewScheduleStore,
+) -> None:
+    """_notify must no-op when sender hasn't been injected."""
+    agent = _make_agent(knowledge_index, review_schedule)
+    # No set_sender call; _notify must swallow silently.
+    asyncio.run(agent._notify(chat_id=77, text="anything"))
+    # No exception; nothing further to assert.

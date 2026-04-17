@@ -35,6 +35,7 @@ if TYPE_CHECKING:
         UserFactsWriter,
         UserProfile,
     )
+    from project0.telegram_io import BotSender
 
 log = logging.getLogger(__name__)
 
@@ -327,6 +328,25 @@ class Intelligence:
         self._user_facts_reader = user_facts_reader
         self._user_facts_writer = user_facts_writer
         self._tool_specs = self._build_tool_specs()
+        self._sender: "BotSender | None" = None
+        self._current_chat_id: int | None = None
+
+    def set_sender(self, sender: "BotSender") -> None:
+        """Injected after the real Telegram bot applications are built."""
+        self._sender = sender
+
+    async def _notify(self, chat_id: int | None, text: str) -> None:
+        """Best-effort status notification. Silent no-op if sender not
+        injected or chat_id is None. Failures swallowed — the main work
+        must not be blocked by a status message."""
+        if self._sender is None or chat_id is None:
+            return
+        try:
+            await self._sender.send(
+                agent="intelligence", chat_id=chat_id, text=text,
+            )
+        except Exception:
+            log.exception("intelligence: _notify failed; continuing")
 
     def _build_tool_specs(self) -> list[ToolSpec]:
         return [
@@ -405,6 +425,10 @@ class Intelligence:
                 date.fromisoformat(date_str)
                 if date_str
                 else datetime.now(tz=self._user_tz).date()
+            )
+            await self._notify(
+                self._current_chat_id,
+                "（稍等，顾瑾去拉推文、跑总结，大概要一两分钟~）",
             )
             report = await generate_daily_report(
                 target_date=target_date,
@@ -644,6 +668,15 @@ class Intelligence:
     async def _run_chat_turn(
         self, env: Envelope, mode_section: str
     ) -> AgentResult | None:
+        self._current_chat_id = env.telegram_chat_id
+        try:
+            return await self._run_chat_turn_inner(env, mode_section)
+        finally:
+            self._current_chat_id = None
+
+    async def _run_chat_turn_inner(
+        self, env: Envelope, mode_section: str
+    ) -> AgentResult | None:
         from project0.intelligence.summarizer_prompt import build_qa_user_prompt
 
         latest = self._try_read_latest_report()
@@ -662,6 +695,13 @@ class Intelligence:
         )
 
     async def _run_delegated_turn(self, env: Envelope) -> AgentResult | None:
+        self._current_chat_id = env.telegram_chat_id
+        try:
+            return await self._run_delegated_turn_inner(env)
+        finally:
+            self._current_chat_id = None
+
+    async def _run_delegated_turn_inner(self, env: Envelope) -> AgentResult | None:
         from project0.intelligence.summarizer_prompt import build_delegated_user_prompt
 
         payload = env.payload or {}

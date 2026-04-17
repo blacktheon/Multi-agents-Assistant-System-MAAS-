@@ -1109,6 +1109,111 @@ def test_review_parse_tolerates_trailing_prose(tmp_path) -> None:
 # --- registry wiring --------------------------------------------------------
 
 
+# --- placeholder notification tests ------------------------------------------
+
+
+def test_run_review_now_sends_placeholder(tmp_path) -> None:
+    """run_review_now must send a 'please wait' placeholder to the chat
+    before starting the review LLM call."""
+    from project0.agents.supervisor import (
+        Supervisor, SupervisorConfig, SupervisorPersona,
+    )
+    from project0.store import Store
+    from project0.llm.tools import ToolCall, ToolUseResult
+
+    store = Store(str(tmp_path / "store.db"))
+    store.init_schema()
+    _insert_user_envelope_at(
+        store, chat_id=42, body="hi", msg_id=1,
+        when=datetime.now(UTC) - timedelta(hours=2),
+    )
+
+    persona = SupervisorPersona(
+        core="CORE", dm_mode="DM", pulse_mode="PULSE", tool_use_guide="TOOLS",
+    )
+    cfg = SupervisorConfig(
+        model="fake", max_tokens_reply=1024, max_tool_iterations=6,
+        transcript_window=10,
+        quiet_threshold_seconds=300, max_wait_seconds=3600, per_tick_limit=200,
+    )
+
+    class _CaptureSender:
+        def __init__(self):
+            self.sent = []
+        async def send(self, *, agent, chat_id, text):
+            self.sent.append({"agent": agent, "chat_id": chat_id, "text": text})
+
+    captured_sender = _CaptureSender()
+    good = json.dumps({
+        "agent": "manager",
+        "envelope_id_from": 1, "envelope_id_to": 1, "envelope_count": 1,
+        "score_helpfulness": 70, "score_correctness": 70,
+        "score_tone": 70, "score_efficiency": 70,
+        "critique_text": "ok", "recommendations": [],
+    })
+
+    class _ScriptedLLM:
+        def __init__(self):
+            self.n = 0
+        async def complete(self, **kw):
+            return good
+        async def complete_with_tools(self, *, system, messages, tools,
+                                      max_tokens, agent, purpose, envelope_id=None):
+            self.n += 1
+            if self.n == 1:
+                return ToolUseResult(
+                    kind="tool_use", text=None,
+                    tool_calls=[ToolCall(id="c1", name="run_review_now",
+                                         input={"agent": "manager"})],
+                )
+            return ToolUseResult(kind="text", text="done", tool_calls=[])
+
+    sup = Supervisor(llm=_ScriptedLLM(), store=store, persona=persona, config=cfg)
+    sup.set_sender(captured_sender)
+
+    env = Envelope(
+        id=None, ts="2026-04-18T03:55:00Z", parent_id=None,
+        source="telegram_group", telegram_chat_id=42, telegram_msg_id=99,
+        received_by_bot="supervisor",
+        from_kind="user", from_agent=None, to_agent="supervisor",
+        body="跑一次 manager 的评价",
+        routing_reason="mention",
+    )
+    asyncio.run(sup.handle(env))
+
+    # At least one placeholder sent from the supervisor bot to chat 42.
+    assert len(captured_sender.sent) >= 1
+    first = captured_sender.sent[0]
+    assert first["agent"] == "supervisor"
+    assert first["chat_id"] == 42
+    assert "稍等" in first["text"] or "等一下" in first["text"]
+
+
+def test_notify_without_sender_is_silent(tmp_path) -> None:
+    """_notify must no-op when sender hasn't been injected (unit tests,
+    tests that skip main.py wiring)."""
+    from project0.agents.supervisor import (
+        Supervisor, SupervisorConfig, SupervisorPersona,
+    )
+    from project0.store import Store
+
+    store = Store(str(tmp_path / "store.db"))
+    store.init_schema()
+    persona = SupervisorPersona(
+        core="CORE", dm_mode="DM", pulse_mode="PULSE", tool_use_guide="TOOLS",
+    )
+    cfg = SupervisorConfig(
+        model="fake", max_tokens_reply=1024, max_tool_iterations=6,
+        transcript_window=10,
+        quiet_threshold_seconds=300, max_wait_seconds=3600, per_tick_limit=200,
+    )
+    sup = Supervisor(llm=_FakeLLM(next_response="x"), store=store,
+                     persona=persona, config=cfg)
+    # No set_sender call. _notify must swallow silently.
+    asyncio.run(sup._notify(chat_id=42, text="anything"))
+    # No exception; nothing further to assert.
+
+
 def test_register_supervisor_installs_into_correct_registries() -> None:
     from project0.agents.registry import (
         AGENT_REGISTRY, AGENT_SPECS, LISTENER_REGISTRY, PULSE_REGISTRY,

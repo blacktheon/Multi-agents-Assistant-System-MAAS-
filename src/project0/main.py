@@ -441,6 +441,9 @@ async def _run(settings: Settings) -> None:
         handler=orch.handle,
     )
     orch.sender = real_sender
+    supervisor.set_sender(real_sender)
+    learning.set_sender(real_sender)
+    intelligence.set_sender(real_sender)
 
     log.info("starting bot pollers for: %s", ", ".join(apps))
 

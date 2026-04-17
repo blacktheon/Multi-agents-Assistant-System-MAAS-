@@ -38,6 +38,7 @@ if TYPE_CHECKING:
         UserFactsReader,
         UserProfile,
     )
+    from project0.telegram_io import BotSender
 
 log = logging.getLogger(__name__)
 
@@ -249,6 +250,25 @@ class LearningAgent:
         self._user_profile = user_profile
         self._user_facts_reader = user_facts_reader
         self._tool_specs = self._build_tool_specs()
+        self._sender: "BotSender | None" = None
+        self._current_chat_id: int | None = None
+
+    def set_sender(self, sender: "BotSender") -> None:
+        """Injected after the real Telegram bot applications are built."""
+        self._sender = sender
+
+    async def _notify(self, chat_id: int | None, text: str) -> None:
+        """Best-effort status notification. Silent no-op if sender not
+        injected or chat_id is None. Failures swallowed — the main work
+        must not be blocked by a status message."""
+        if self._sender is None or chat_id is None:
+            return
+        try:
+            await self._sender.send(
+                agent="learning", chat_id=chat_id, text=text,
+            )
+        except Exception:
+            log.exception("learning: _notify failed; continuing")
 
     def _now_local(self) -> datetime:
         if self._clock is not None:
@@ -355,6 +375,10 @@ class LearningAgent:
         self, url: str, user_notes: str | None
     ) -> tuple[str, bool]:
         """Fetch URL, extract text via trafilatura, summarize, store in Notion."""
+        await self._notify(
+            self._current_chat_id,
+            "（少爷等一下，书瑶去拉这个链接整理成笔记，短的一分钟，长的两三分钟~📖）",
+        )
         import httpx
         import trafilatura  # type: ignore[import-untyped]
 
@@ -400,6 +424,10 @@ class LearningAgent:
         self, text: str, user_notes: str | None
     ) -> tuple[str, bool]:
         """Summarize raw text, store in Notion."""
+        await self._notify(
+            self._current_chat_id,
+            "（少爷等一下，书瑶在整理这段内容…📝）",
+        )
         summary_data = await self._summarize_content(text, user_notes)
 
         assert self._notion is not None
@@ -616,6 +644,15 @@ class LearningAgent:
     # --- chat turn -----------------------------------------------------------
 
     async def _run_chat_turn(
+        self, env: Envelope, mode_section: str
+    ) -> AgentResult | None:
+        self._current_chat_id = env.telegram_chat_id
+        try:
+            return await self._run_chat_turn_inner(env, mode_section)
+        finally:
+            self._current_chat_id = None
+
+    async def _run_chat_turn_inner(
         self, env: Envelope, mode_section: str
     ) -> AgentResult | None:
         system = self._assemble_system_blocks(mode_section)
