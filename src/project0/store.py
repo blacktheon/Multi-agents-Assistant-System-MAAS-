@@ -356,25 +356,22 @@ class MessagesStore:
         chat_id (the user's user_id) across every bot the user DMs, so
         the same chat_id bucket holds conversations with every agent.
         Use ``recent_for_dm`` instead."""
-        if visible_to == "secretary":
-            sql = """
-                SELECT id, envelope_json FROM messages
-                WHERE telegram_chat_id = ?
-                ORDER BY id DESC
-                LIMIT ?
+        rows = self._conn.execute(
             """
-            params: tuple = (chat_id, limit)
-        else:
-            sql = """
-                SELECT id, envelope_json FROM messages
-                WHERE telegram_chat_id = ?
-                  AND (from_agent IS NULL OR from_agent != 'secretary')
-                  AND to_agent != 'secretary'
-                ORDER BY id DESC
-                LIMIT ?
-            """
-            params = (chat_id, limit)
-        rows = self._conn.execute(sql, params).fetchall()
+            SELECT id, envelope_json FROM messages
+            WHERE telegram_chat_id = ?
+              AND (
+                   ? = 'secretary'
+                   OR (
+                       (from_agent IS NULL OR from_agent != 'secretary')
+                       AND to_agent != 'secretary'
+                   )
+              )
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (chat_id, visible_to, limit),
+        ).fetchall()
         result: list[Envelope] = []
         for r in rows:
             env = Envelope.from_json(r["envelope_json"])
