@@ -14,8 +14,10 @@ In this skeleton, two concerns live here:
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
@@ -84,6 +86,46 @@ class RealBotSender:
     async def send_chat_action(self, *, agent: str, chat_id: int, action: str) -> None:
         app = self._apps[agent]
         await app.bot.send_chat_action(chat_id=chat_id, action=action)
+
+
+@asynccontextmanager
+async def typing_indicator(
+    *,
+    sender: BotSender,
+    agent: str,
+    chat_id: int,
+    refresh_seconds: float = 4.0,
+) -> AsyncIterator[None]:
+    """Show 'agent is typing…' on Telegram for the duration of the block.
+
+    Fires one chat_action immediately on enter, then refreshes every
+    `refresh_seconds` (Telegram's indicator auto-clears at ~5s). Cancels
+    the refresh task on exit, whether the body completed normally or raised.
+    Any exception from the sender is logged and swallowed — a failed typing
+    indicator must never block a reply.
+    """
+
+    async def _safe_send() -> None:
+        try:
+            await sender.send_chat_action(agent=agent, chat_id=chat_id, action="typing")
+        except Exception:
+            log.debug("typing_indicator: send_chat_action failed", exc_info=True)
+
+    async def _loop() -> None:
+        while True:
+            await asyncio.sleep(refresh_seconds)
+            await _safe_send()
+
+    await _safe_send()  # immediate first tick
+    task = asyncio.create_task(_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
 
 
 def _classify_update(update: Update, received_by_bot: str) -> InboundUpdate | None:
