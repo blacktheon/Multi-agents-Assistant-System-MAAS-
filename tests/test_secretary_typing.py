@@ -37,7 +37,7 @@ def _dm_envelope() -> Envelope:
         telegram_chat_id=7,
         telegram_msg_id=1,
         received_by_bot="secretary",
-        from_kind="human",
+        from_kind="user",
         from_agent=None,
         to_agent="secretary",
         body="hi",
