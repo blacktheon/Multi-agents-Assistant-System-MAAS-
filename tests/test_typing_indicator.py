@@ -57,7 +57,9 @@ async def test_typing_indicator_swallows_sender_errors() -> None:
             raise RuntimeError("boom")
 
     # Must not raise.
-    async with typing_indicator(sender=BrokenSender(), agent="secretary", chat_id=1, refresh_seconds=0.05):
+    async with typing_indicator(
+        sender=BrokenSender(), agent="secretary", chat_id=1, refresh_seconds=0.05
+    ):
         await asyncio.sleep(0.10)
 
 
@@ -65,7 +67,9 @@ async def test_typing_indicator_swallows_sender_errors() -> None:
 async def test_typing_indicator_cancels_on_inner_exception() -> None:
     sender = FakeBotSender()
     with pytest.raises(ValueError):
-        async with typing_indicator(sender=sender, agent="secretary", chat_id=9, refresh_seconds=0.05):
+        async with typing_indicator(
+            sender=sender, agent="secretary", chat_id=9, refresh_seconds=0.05
+        ):
             raise ValueError("caller error")
     count_after_exit = len(sender.chat_actions)
     await asyncio.sleep(0.10)

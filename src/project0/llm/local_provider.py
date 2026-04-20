@@ -10,12 +10,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, cast
+from typing import cast
 
 import httpx
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
-from openai.types.chat import ChatCompletion
-from openai.types.chat import ChatCompletionMessageParam
+from openai.types.chat import ChatCompletion, ChatCompletionMessageParam
 
 from project0.llm.provider import LLMProviderError, Msg, SystemBlocks
 from project0.llm.tools import AssistantToolUseMsg, ToolResultMsg, ToolSpec, ToolUseResult

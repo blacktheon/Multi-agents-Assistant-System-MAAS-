@@ -24,7 +24,6 @@ from typing import Any
 from project0.agents._tool_loop import run_agentic_loop
 from project0.envelope import AgentResult, Envelope
 from project0.llm.provider import LLMProvider, LLMProviderError, Msg, SystemBlocks
-from project0.telegram_io import BotSender, typing_indicator
 from project0.llm.tools import ToolCall, ToolSpec
 from project0.store import (
     AgentMemory,
@@ -33,6 +32,7 @@ from project0.store import (
     UserFactsWriter,
     UserProfile,
 )
+from project0.telegram_io import BotSender, typing_indicator
 
 log = logging.getLogger(__name__)
 
