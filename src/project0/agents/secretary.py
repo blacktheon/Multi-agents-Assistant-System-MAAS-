@@ -252,6 +252,11 @@ class Secretary:
         self._user_facts_writer = user_facts_writer
         self._bot_sender = bot_sender
 
+    def set_bot_sender(self, sender: BotSender) -> None:
+        """Injected after the real Telegram bot applications are built.
+        Enables the typing-indicator wrap on reply paths."""
+        self._bot_sender = sender
+
     async def handle(self, env: Envelope) -> AgentResult | None:
         reason = env.routing_reason
 

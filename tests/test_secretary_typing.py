@@ -81,3 +81,28 @@ async def test_dm_reply_works_without_sender(tmp_path: Path) -> None:
     env = _dm_envelope()
     result = await secretary.handle(env)
     assert result is not None and result.reply_text == "好的"
+
+
+@pytest.mark.asyncio
+async def test_set_bot_sender_enables_typing_after_construction(tmp_path: Path) -> None:
+    """Secretary can be constructed with bot_sender=None and have a real
+    sender injected later via set_bot_sender. This matches how main.py
+    wires RealBotSender after build_bot_applications returns."""
+    store = Store(str(tmp_path / "s.db"))
+    store.init_schema()
+    persona = load_persona(Path("prompts/secretary.md"))
+    secretary = Secretary(
+        llm=FakeProvider(responses=["好的"]),
+        memory=store.agent_memory("secretary"),
+        messages_store=store.messages(),
+        persona=persona,
+        config=_cfg(),
+    )  # no bot_sender at construction
+
+    late_sender = FakeBotSender()
+    secretary.set_bot_sender(late_sender)
+
+    result = await secretary.handle(_dm_envelope())
+    assert result is not None and result.reply_text == "好的"
+    typing_to_chat_7 = [a for a in late_sender.chat_actions if a["chat_id"] == 7]
+    assert len(typing_to_chat_7) >= 1
