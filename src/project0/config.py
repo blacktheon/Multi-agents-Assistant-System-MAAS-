@@ -33,6 +33,10 @@ class Settings:
     notion_token: str
     notion_database_id: str
     anthropic_cache_ttl: Literal["ephemeral", "1h"] = "ephemeral"
+    secretary_mode: Literal["work", "free"] = "work"
+    local_llm_base_url: str = "http://127.0.0.1:8000/v1"
+    local_llm_model: str = "qwen2.5-72b-awq-8k"
+    local_llm_api_key: str = "unused"
 
 
 def _parse_int_csv(name: str, raw: str) -> frozenset[int]:
@@ -89,6 +93,19 @@ def load_settings() -> Settings:
             f"ANTHROPIC_CACHE_TTL must be 'ephemeral' or '1h', got {raw_ttl!r}"
         )
 
+    secretary_mode_raw = os.environ.get("SECRETARY_MODE", "work").strip().lower() or "work"
+    if secretary_mode_raw not in ("work", "free"):
+        raise RuntimeError(
+            f"SECRETARY_MODE must be 'work' or 'free', got {secretary_mode_raw!r}"
+        )
+    local_llm_base_url = (
+        os.environ.get("LOCAL_LLM_BASE_URL", "").strip() or "http://127.0.0.1:8000/v1"
+    )
+    local_llm_model = (
+        os.environ.get("LOCAL_LLM_MODEL", "").strip() or "qwen2.5-72b-awq-8k"
+    )
+    local_llm_api_key = os.environ.get("LOCAL_LLM_API_KEY", "").strip() or "unused"
+
     store_path = os.environ.get("STORE_PATH", "").strip() or "data/store.db"
     log_level = os.environ.get("LOG_LEVEL", "").strip() or "INFO"
 
@@ -130,4 +147,8 @@ def load_settings() -> Settings:
         notion_token=notion_token,
         notion_database_id=notion_database_id,
         anthropic_cache_ttl=raw_ttl,  # type: ignore[arg-type]
+        secretary_mode=secretary_mode_raw,  # type: ignore[arg-type]
+        local_llm_base_url=local_llm_base_url,
+        local_llm_model=local_llm_model,
+        local_llm_api_key=local_llm_api_key,
     )
