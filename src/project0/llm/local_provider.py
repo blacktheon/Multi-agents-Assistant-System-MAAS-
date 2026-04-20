@@ -17,15 +17,19 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpe
 from openai.types.chat import ChatCompletion
 from openai.types.chat import ChatCompletionMessageParam
 
-from project0.llm.provider import Msg, SystemBlocks
+from project0.llm.provider import LLMProviderError, Msg, SystemBlocks
 from project0.llm.tools import AssistantToolUseMsg, ToolResultMsg, ToolSpec, ToolUseResult
 from project0.store import LLMUsageStore
 
 log = logging.getLogger(__name__)
 
 
-class LocalProviderError(Exception):
-    """Base class for LocalProvider failures."""
+class LocalProviderError(LLMProviderError):
+    """Base class for LocalProvider failures.
+
+    Inherits from LLMProviderError so Secretary's existing provider-error
+    catch path handles local-provider failures the same as Anthropic ones —
+    graceful silent drop, daemon keeps running."""
 
 
 class LocalProviderUnavailableError(LocalProviderError):
