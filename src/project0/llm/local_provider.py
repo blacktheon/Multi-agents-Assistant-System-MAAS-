@@ -8,11 +8,12 @@ local-llm-design.md for the design rationale.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, cast
 
 import httpx
-from openai import AsyncOpenAI
+from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
 from openai.types.chat import ChatCompletion
 from openai.types.chat import ChatCompletionMessageParam
 
@@ -54,11 +55,13 @@ class LocalProvider:
         api_key: str,
         usage_store: LLMUsageStore,
         request_timeout_seconds: float = 180.0,
+        retry_sleep_seconds: float = 2.0,
     ) -> None:
         if not api_key:
             raise ValueError("LocalProvider requires a non-empty api_key (any string)")
         self._model = model
         self._usage_store = usage_store
+        self._retry_sleep = retry_sleep_seconds
         self._client = AsyncOpenAI(
             base_url=base_url,
             api_key=api_key,
@@ -87,12 +90,45 @@ class LocalProvider:
                 cast(ChatCompletionMessageParam, {"role": m.role, "content": m.content})
             )
 
-        resp: ChatCompletion = await self._client.chat.completions.create(
-            model=self._model,
-            messages=payload_messages,
-            max_tokens=max_tokens,
-            stream=False,
-        )
+        last_err: Exception | None = None
+        resp: ChatCompletion | None = None
+        for attempt in (1, 2):
+            try:
+                resp = await self._client.chat.completions.create(
+                    model=self._model,
+                    messages=payload_messages,
+                    max_tokens=max_tokens,
+                    stream=False,
+                )
+                break
+            except APITimeoutError as e:
+                log.error("local llm timeout: %s", e)
+                raise LocalProviderUnavailableError("timeout") from e
+            except APIConnectionError as e:
+                log.error("local llm connection error: %s", e)
+                raise LocalProviderUnavailableError("connection") from e
+            except APIStatusError as e:
+                status = getattr(e, "status_code", None)
+                body_str = str(getattr(e, "body", "") or "")
+                if status == 400 and (
+                    "context length" in body_str.lower() or "context_length" in body_str.lower()
+                ):
+                    raise LocalProviderContextError(body_str) from e
+                if status and 500 <= status < 600 and attempt == 1:
+                    log.warning(
+                        "local llm 5xx (attempt 1), retrying in %.1fs: %s",
+                        self._retry_sleep, body_str,
+                    )
+                    last_err = e
+                    await asyncio.sleep(self._retry_sleep)
+                    continue
+                log.error("local llm HTTP error status=%s: %s", status, body_str)
+                raise LocalProviderUnavailableError(f"http {status}") from e
+        else:
+            # Both attempts failed with retryable errors.
+            raise LocalProviderUnavailableError("persistent 5xx") from last_err
+
+        assert resp is not None  # for mypy; loop guarantees it
 
         usage = getattr(resp, "usage", None)
         in_tok = int(getattr(usage, "prompt_tokens", 0) or 0) if usage else 0

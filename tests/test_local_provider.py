@@ -124,3 +124,152 @@ async def test_local_provider_joins_system_blocks(tmp_path: Path) -> None:
     assert payload["model"] == MODEL
     assert payload["max_tokens"] == 50
     assert payload["stream"] is False
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_local_provider_connection_refused(tmp_path: Path) -> None:
+    from project0.llm.local_provider import LocalProviderUnavailableError
+
+    usage = _make_usage_store(tmp_path)
+    provider = LocalProvider(base_url=BASE_URL, model=MODEL, api_key="k", usage_store=usage)
+    respx.post(f"{BASE_URL}/chat/completions").mock(side_effect=httpx.ConnectError("refused"))
+
+    with pytest.raises(LocalProviderUnavailableError):
+        await provider.complete(
+            system="s", messages=[Msg(role="user", content="hi")],
+            max_tokens=50, agent="secretary", purpose="reply",
+        )
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_local_provider_timeout(tmp_path: Path) -> None:
+    from project0.llm.local_provider import LocalProviderUnavailableError
+
+    usage = _make_usage_store(tmp_path)
+    provider = LocalProvider(
+        base_url=BASE_URL, model=MODEL, api_key="k", usage_store=usage,
+        request_timeout_seconds=0.1,
+    )
+    respx.post(f"{BASE_URL}/chat/completions").mock(side_effect=httpx.ReadTimeout("slow"))
+
+    with pytest.raises(LocalProviderUnavailableError):
+        await provider.complete(
+            system="s", messages=[Msg(role="user", content="hi")],
+            max_tokens=50, agent="secretary", purpose="reply",
+        )
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_local_provider_400_context_length(tmp_path: Path) -> None:
+    from project0.llm.local_provider import LocalProviderContextError
+
+    usage = _make_usage_store(tmp_path)
+    provider = LocalProvider(base_url=BASE_URL, model=MODEL, api_key="k", usage_store=usage)
+    respx.post(f"{BASE_URL}/chat/completions").mock(
+        return_value=httpx.Response(
+            400,
+            json={"error": {"message": "This model's maximum context length is 8192 tokens."}},
+        )
+    )
+
+    with pytest.raises(LocalProviderContextError):
+        await provider.complete(
+            system="s", messages=[Msg(role="user", content="hi")],
+            max_tokens=50, agent="secretary", purpose="reply",
+        )
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_local_provider_400_non_context_raises_unavailable(tmp_path: Path) -> None:
+    from project0.llm.local_provider import LocalProviderUnavailableError
+
+    usage = _make_usage_store(tmp_path)
+    provider = LocalProvider(base_url=BASE_URL, model=MODEL, api_key="k", usage_store=usage)
+    respx.post(f"{BASE_URL}/chat/completions").mock(
+        return_value=httpx.Response(400, json={"error": {"message": "bad request"}})
+    )
+
+    with pytest.raises(LocalProviderUnavailableError):
+        await provider.complete(
+            system="s", messages=[Msg(role="user", content="hi")],
+            max_tokens=50, agent="secretary", purpose="reply",
+        )
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_local_provider_500_then_200_retries_once(tmp_path: Path) -> None:
+    usage = _make_usage_store(tmp_path)
+    provider = LocalProvider(
+        base_url=BASE_URL, model=MODEL, api_key="k",
+        usage_store=usage, retry_sleep_seconds=0.0,
+    )
+    route = respx.post(f"{BASE_URL}/chat/completions").mock(
+        side_effect=[
+            httpx.Response(500, json={"error": {"message": "internal"}}),
+            httpx.Response(
+                200,
+                json={
+                    "choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                },
+            ),
+        ]
+    )
+
+    out = await provider.complete(
+        system="s", messages=[Msg(role="user", content="hi")],
+        max_tokens=50, agent="secretary", purpose="reply",
+    )
+    assert out == "ok"
+    assert route.call_count == 2
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_local_provider_500_twice_raises_unavailable(tmp_path: Path) -> None:
+    from project0.llm.local_provider import LocalProviderUnavailableError
+
+    usage = _make_usage_store(tmp_path)
+    provider = LocalProvider(
+        base_url=BASE_URL, model=MODEL, api_key="k",
+        usage_store=usage, retry_sleep_seconds=0.0,
+    )
+    respx.post(f"{BASE_URL}/chat/completions").mock(
+        side_effect=[
+            httpx.Response(500, json={"error": {"message": "x"}}),
+            httpx.Response(500, json={"error": {"message": "x"}}),
+        ]
+    )
+
+    with pytest.raises(LocalProviderUnavailableError):
+        await provider.complete(
+            system="s", messages=[Msg(role="user", content="hi")],
+            max_tokens=50, agent="secretary", purpose="reply",
+        )
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_local_provider_empty_content_returns_empty_string(tmp_path: Path) -> None:
+    usage = _make_usage_store(tmp_path)
+    provider = LocalProvider(base_url=BASE_URL, model=MODEL, api_key="k", usage_store=usage)
+    respx.post(f"{BASE_URL}/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"role": "assistant", "content": None}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 0, "total_tokens": 1},
+            },
+        )
+    )
+
+    out = await provider.complete(
+        system="s", messages=[Msg(role="user", content="hi")],
+        max_tokens=50, agent="secretary", purpose="reply",
+    )
+    assert out == ""
