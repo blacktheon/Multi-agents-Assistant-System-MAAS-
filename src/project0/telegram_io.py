@@ -41,15 +41,25 @@ class BotSender(Protocol):
     async def send(self, *, agent: str, chat_id: int, text: str) -> None:
         """Send `text` to `chat_id` as `agent`'s bot."""
 
+    async def send_chat_action(self, *, agent: str, chat_id: int, action: str) -> None:
+        """Send a chat action (e.g. 'typing') to `chat_id` as `agent`'s bot.
+        Telegram's indicator auto-expires after ~5s; callers refresh if needed."""
+
 
 @dataclass
 class FakeBotSender:
     """Test double. Records every send so tests can assert the outbound tree."""
 
     sent: list[dict[str, object]] = field(default_factory=list)
+    chat_actions: list[dict[str, object]] = field(default_factory=list)
 
     async def send(self, *, agent: str, chat_id: int, text: str) -> None:
         self.sent.append({"agent": agent, "chat_id": chat_id, "text": text})
+
+    async def send_chat_action(self, *, agent: str, chat_id: int, action: str) -> None:
+        self.chat_actions.append(
+            {"agent": agent, "chat_id": chat_id, "action": action}
+        )
 
 
 # --- Real Telegram wiring -------------------------------------------------
@@ -70,6 +80,10 @@ class RealBotSender:
     async def send(self, *, agent: str, chat_id: int, text: str) -> None:
         app = self._apps[agent]
         await app.bot.send_message(chat_id=chat_id, text=text)
+
+    async def send_chat_action(self, *, agent: str, chat_id: int, action: str) -> None:
+        app = self._apps[agent]
+        await app.bot.send_chat_action(chat_id=chat_id, action=action)
 
 
 def _classify_update(update: Update, received_by_bot: str) -> InboundUpdate | None:
