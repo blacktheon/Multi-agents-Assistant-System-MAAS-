@@ -273,3 +273,19 @@ async def test_local_provider_empty_content_returns_empty_string(tmp_path: Path)
         max_tokens=50, agent="secretary", purpose="reply",
     )
     assert out == ""
+
+
+@pytest.mark.asyncio
+async def test_local_provider_complete_with_tools_raises_not_implemented(tmp_path: Path) -> None:
+    usage = _make_usage_store(tmp_path)
+    provider = LocalProvider(base_url=BASE_URL, model=MODEL, api_key="k", usage_store=usage)
+
+    with pytest.raises(NotImplementedError, match="free mode must run"):
+        await provider.complete_with_tools(
+            system="s",
+            messages=[],
+            tools=[],
+            max_tokens=50,
+            agent="secretary",
+            purpose="reply",
+        )
