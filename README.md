@@ -24,6 +24,7 @@ The one you can just talk to.
 - Delivers reminders Manager hands off — "主人，还有十五分钟要开会" — in her own warm voice, not a robotic notification
 - Has a cooldown gate so she doesn't over-talk when the group is busy
 - Gets playfully jealous in group chats if she sees you chatting with Manager or Intelligence
+- **Optional local-LLM backend** — flip `SECRETARY_MODE=free` in `.env` to point Secretary at an OpenAI-compatible server (vLLM / TensorRT-LLM) running an abliterated Qwen 2.5 72B on your own hardware. Uses a separate persona file (`secretary_free.md`) and disables the long-term memory tool to keep anything she says from leaking into the other agents' context. Telegram's native "typing…" indicator fills the wait on slow local inference. Flip back to `work` to return to Claude with full memory
 
 ### 顾瑾 · Intelligence
 Your personal tech-news briefer.
@@ -307,12 +308,17 @@ Intelligence webapp — reach it from your phone via your Tailnet IP.
   running.
 - **Edit `data/user_profile.yaml`**, **`prompts/*.toml`**,
   **`prompts/*.md`**, and **`.env`** — plain textarea, Save, then click
-  Restart on the header to apply.
+  Restart on the header to apply. The `/personas` and `/toml` pages list
+  every `.md` and `.toml` file currently in `prompts/` (drop a new file
+  in and it's immediately editable — no code change needed).
 - **Full CRUD on `user_facts`** — add, edit, deactivate/reactivate, and
   hard delete individual facts. Changes are live (shared SQLite in WAL
   mode); no restart required.
 - **Token usage page** — daily SVG bar chart + rollup tables for the
   last 30 days, last 7 days by agent × purpose, and the last 50 calls.
+  Local-LLM calls (`qwen2.5-72b-awq-8k`) are kept in the audit trail
+  but excluded from the dashboard, since they aren't a dollar cost
+  and would add noise to a chart that's really about Anthropic spend.
 - **Review page** — `/reviews`: multi-line SVG time-series of overall scores, three per-agent cards (latest score + four rubric dims + sparkline + top recommendation), per-agent collapsible history with full critique text. Read-only surface into `supervisor_reviews`.
 
 ### Caveat: panel crash with MAAS still running
@@ -353,6 +359,17 @@ ANTHROPIC_API_KEY=sk-ant-...
 LLM_PROVIDER=anthropic                        # default; "fake" uses FakeProvider (for tests)
 LLM_MODEL=claude-sonnet-4-6                   # default for Manager and Secretary
 
+# Secretary mode. `work` (default) = Claude + normal persona + memory tool.
+# `free` = local OpenAI-compatible server + secretary_free.{md,toml} + NO
+# memory tool (required: prevents anything Secretary produces in free mode
+# from leaking into other agents' prompts via the shared user_facts table).
+SECRETARY_MODE=work
+
+# Local LLM connection (only used when SECRETARY_MODE=free).
+LOCAL_LLM_BASE_URL=http://127.0.0.1:8000/v1
+LOCAL_LLM_MODEL=qwen2.5-72b-awq-8k
+LOCAL_LLM_API_KEY=unused
+
 # Storage and logging
 STORE_PATH=data/store.db
 LOG_LEVEL=INFO
@@ -383,7 +400,8 @@ LEARNING_PULSE_CHAT_ID=-100123456789
 Agent-specific configuration lives in `prompts/`:
 
 - `prompts/manager.md` and `manager.toml` — Manager's persona and pulse config
-- `prompts/secretary.md` and `secretary.toml` — Secretary's persona and cooldown thresholds
+- `prompts/secretary.md` and `secretary.toml` — Secretary's persona and cooldown thresholds (used when `SECRETARY_MODE=work`)
+- `prompts/secretary_free.md` and `secretary_free.toml` — alternate persona and tighter token caps for local-LLM mode (used when `SECRETARY_MODE=free`)
 - `prompts/intelligence.md` and `intelligence.toml` — Intelligence's persona, watchlist, webapp binding, daily pulse hour
 - `prompts/learning.md` and `learning.toml` — Learning's persona, Notion sync interval, review intervals, processing limits
 - `prompts/supervisor.md` and `supervisor.toml` — Supervisor's persona and review rubric config (quiet threshold, max wait, per-tick limit, two pulse entries)
@@ -608,6 +626,8 @@ Sub-projects completed (in order):
 - **Learning agent** — Notion-backed knowledge base curator (温书瑶). Processes links and text into structured knowledge entries, runs spaced repetition review coaching (1/3/7/14/30-day intervals), syncs with Notion every 30 seconds for bidirectional access.
 
 - **Supervisor agent (叶霏)** — fifth agent, pulse-scheduled reviewer of Manager / Intelligence / Learning (never Secretary). Idle gate waits for 5 minutes of chat quiet before reviewing; exact-match idempotency on the per-agent cursor prevents overlap. Four-dimension rubric (helpfulness / correctness / tone / efficiency) with weighted overall score, short Chinese critique, and up to three recommendations per review. On-demand reviews via chat (`run_review_now`, `run_review_all`, `list_past_reviews`) bypass the idle gate; scheduled reviews run every 3 hours. Cross-cutting: Secretary-history isolation (`MessagesStore.recent_for_chat` requires a `visible_to` kwarg; non-Secretary callers never see Secretary envelopes). New `/reviews` page in the control panel: SVG time-series + per-agent cards + full critique history.
+
+- **Secretary local-LLM option** — coupled persona + provider switch via `SECRETARY_MODE=work|free`. `free` mode points Secretary at an OpenAI-compatible vLLM / TensorRT-LLM server serving Qwen 2.5 72B abliterated on DGX Spark (5.5 tok/s single, ~43 tok/s batch 8), swaps in `prompts/secretary_free.{md,toml}`, and hard-disables the `remember_about_user` tool at the wiring level to prevent NSFW content from leaking into other agents' prompts via the shared `user_facts` table (invariant enforced by factory shape + belt-and-suspenders assert in `main.py`). Telegram `sendChatAction("typing")` refreshed every 4s fills the wait. Local usage rows still land in `llm_usage` (audit trail) but are filtered out of the `/usage` dashboard. The control panel's `/personas` and `/toml` pages now discover files by scanning `prompts/` — drop any `.md` or `.toml` in and it's editable immediately.
 
 Further out (in rough master-spec order):
 
