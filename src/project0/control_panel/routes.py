@@ -8,10 +8,16 @@ concern. Responses are always HTML pages or redirects — never JSON.
 from __future__ import annotations
 
 import json
+
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from project0.control_panel.paths import ALLOWED_AGENT_NAMES, persona_path, toml_path
+from project0.control_panel.paths import (
+    list_persona_files,
+    list_toml_files,
+    persona_path,
+    toml_path,
+)
 from project0.control_panel.rendering import (
     render_bar_chart_svg,
     render_score_timeseries_svg,
@@ -21,6 +27,11 @@ from project0.control_panel.writes import atomic_write_text
 from project0.store import UserFactsReader, UserFactsWriter
 
 router = APIRouter()
+
+# Models excluded from the /usage dashboard. Local-LLM calls are recorded
+# in llm_usage for audit, but are not a $ cost and would mix noise into the
+# daily chart that's primarily about Anthropic token spend.
+_EXCLUDED_USAGE_MODELS: frozenset[str] = frozenset({"qwen2.5-72b-awq-8k"})
 
 
 def _ctx(request: Request, **extra: object) -> dict[str, object]:
@@ -143,9 +154,10 @@ async def facts_delete(request: Request, fact_id: int) -> RedirectResponse:
 @router.get("/toml")
 async def toml_list(request: Request) -> object:
     templates = request.app.state.templates
+    names = list_toml_files(project_root=request.app.state.project_root)
     return templates.TemplateResponse(
         request, "toml_list.html",
-        _ctx(request, names=ALLOWED_AGENT_NAMES),
+        _ctx(request, names=names),
     )
 
 
@@ -156,7 +168,9 @@ async def toml_edit_get(request: Request, name: str) -> object:
         path = toml_path(name, project_root=request.app.state.project_root)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
-    content = path.read_text(encoding="utf-8") if path.exists() else ""
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"no such file: {name}")
+    content = path.read_text(encoding="utf-8")
     return templates.TemplateResponse(
         request, "toml_edit.html",
         _ctx(request, name=name, content=content),
@@ -171,6 +185,8 @@ async def toml_edit_post(
         path = toml_path(name, project_root=request.app.state.project_root)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"no such file: {name}")
     atomic_write_text(path, content)
     return RedirectResponse(url=f"/toml/{name}", status_code=303)
 
@@ -178,9 +194,10 @@ async def toml_edit_post(
 @router.get("/personas")
 async def personas_list(request: Request) -> object:
     templates = request.app.state.templates
+    names = list_persona_files(project_root=request.app.state.project_root)
     return templates.TemplateResponse(
         request, "personas_list.html",
-        _ctx(request, names=ALLOWED_AGENT_NAMES),
+        _ctx(request, names=names),
     )
 
 @router.get("/personas/{name}")
@@ -190,11 +207,14 @@ async def personas_edit_get(request: Request, name: str) -> object:
         path = persona_path(name, project_root=request.app.state.project_root)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
-    content = path.read_text(encoding="utf-8") if path.exists() else ""
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"no such file: {name}")
+    content = path.read_text(encoding="utf-8")
     return templates.TemplateResponse(
         request, "personas_edit.html",
         _ctx(request, name=name, content=content),
     )
+
 
 @router.post("/personas/{name}")
 async def personas_edit_post(
@@ -204,6 +224,8 @@ async def personas_edit_post(
         path = persona_path(name, project_root=request.app.state.project_root)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"no such file: {name}")
     atomic_write_text(path, content)
     return RedirectResponse(url=f"/personas/{name}", status_code=303)
 
@@ -231,7 +253,7 @@ async def usage(request: Request) -> object:
     templates = request.app.state.templates
     store = request.app.state.store
     usage_store = store.llm_usage()
-    daily = usage_store.daily_rollup(days=30)
+    daily = usage_store.daily_rollup(days=30, exclude_models=_EXCLUDED_USAGE_MODELS)
     chart_rows = [
         {
             "day": r["day"],
@@ -240,8 +262,8 @@ async def usage(request: Request) -> object:
         for r in reversed(daily)
     ]
     chart_svg = render_bar_chart_svg(chart_rows)
-    agent_rows = usage_store.agent_rollup(days=7)
-    recent_rows = usage_store.recent(limit=50)
+    agent_rows = usage_store.agent_rollup(days=7, exclude_models=_EXCLUDED_USAGE_MODELS)
+    recent_rows = usage_store.recent(limit=50, exclude_models=_EXCLUDED_USAGE_MODELS)
     return templates.TemplateResponse(
         request, "usage.html",
         _ctx(

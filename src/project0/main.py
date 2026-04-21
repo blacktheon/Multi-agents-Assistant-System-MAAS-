@@ -25,6 +25,7 @@ from project0.calendar.auth import load_or_acquire_credentials
 from project0.calendar.client import GoogleCalendar
 from project0.config import Settings, load_settings
 from project0.intelligence_web.config import WebConfig
+from project0.llm.local_provider import LocalProvider
 from project0.llm.provider import AnthropicProvider, FakeProvider, LLMProvider
 from project0.orchestrator import Orchestrator
 from project0.pulse import load_pulse_entries, run_pulse_loop
@@ -191,6 +192,53 @@ def _build_llm_provider(settings: Settings, usage_store: LLMUsageStore) -> LLMPr
     raise RuntimeError(f"unknown LLM_PROVIDER={provider_name!r}")
 
 
+def _build_secretary_dependencies(
+    *,
+    settings: Settings,
+    usage_store: LLMUsageStore,
+    anthropic_provider: LLMProvider,
+    base_facts_writer: UserFactsWriter,
+) -> tuple[LLMProvider, Path, Path, UserFactsWriter | None]:
+    """Return (provider, persona_path, config_path, facts_writer_or_none).
+
+    `work` mode returns the shared AnthropicProvider, normal prompt files,
+    and the wired writer. `free` mode returns a fresh LocalProvider, the
+    free-mode prompt files, and None for the writer — this is the NSFW
+    isolation invariant from 2026-04-20-secretary-local-llm-design.md §6.
+    """
+    if settings.secretary_mode == "work":
+        return (
+            anthropic_provider,
+            Path("prompts/secretary.md"),
+            Path("prompts/secretary.toml"),
+            base_facts_writer,
+        )
+    if settings.secretary_mode == "free":
+        local = LocalProvider(
+            base_url=settings.local_llm_base_url,
+            model=settings.local_llm_model,
+            api_key=settings.local_llm_api_key,
+            usage_store=usage_store,
+        )
+        writer: UserFactsWriter | None = None
+        assert writer is None, (
+            "free-mode Secretary must not wire user_facts_writer; "
+            "see 2026-04-20-secretary-local-llm-design.md §6"
+        )
+        log.info(
+            "secretary factory: mode=free model=%s base_url=%s (writer disabled)",
+            settings.local_llm_model,
+            settings.local_llm_base_url,
+        )
+        return (
+            local,
+            Path("prompts/secretary_free.md"),
+            Path("prompts/secretary_free.toml"),
+            writer,
+        )
+    raise RuntimeError(f"unknown secretary_mode={settings.secretary_mode!r}")
+
+
 async def _run(settings: Settings) -> None:
     _ensure_store_dir(settings.store_path)
     store = Store(settings.store_path)
@@ -223,20 +271,41 @@ async def _run(settings: Settings) -> None:
     # happen before the orchestrator handles any message — AGENT_SPECS
     # already lists secretary, so load_settings will have demanded its
     # bot token above.
-    persona = load_persona(Path("prompts/secretary.md"))
-    secretary_cfg = load_config(Path("prompts/secretary.toml"))
+    (
+        secretary_llm,
+        secretary_persona_path,
+        secretary_config_path,
+        secretary_writer,
+    ) = _build_secretary_dependencies(
+        settings=settings,
+        usage_store=usage_store,
+        anthropic_provider=llm,
+        base_facts_writer=secretary_facts_writer,
+    )
+    # Belt-and-suspenders invariant check (factory also enforces).
+    if isinstance(secretary_llm, LocalProvider):
+        assert secretary_writer is None, (
+            "SECRETARY_MODE=free must NOT wire user_facts_writer — "
+            "see 2026-04-20-secretary-local-llm-design.md §6"
+        )
+
+    persona = load_persona(secretary_persona_path)
+    secretary_cfg = load_config(secretary_config_path)
     secretary = Secretary(
-        llm=llm,
+        llm=secretary_llm,
         memory=store.agent_memory("secretary"),
         messages_store=store.messages(),
         persona=persona,
         config=secretary_cfg,
         user_profile=user_profile,
         user_facts_reader=secretary_facts_reader,
-        user_facts_writer=secretary_facts_writer,
+        user_facts_writer=secretary_writer,
     )
     register_secretary(secretary.handle)
-    log.info("secretary registered (model=%s)", secretary_cfg.model)
+    log.info(
+        "secretary registered (mode=%s model=%s)",
+        settings.secretary_mode, secretary_cfg.model,
+    )
 
     # Google Calendar client (shared; used by Manager and any future
     # calendar-using agent). Loads credentials via the installed-app flow
@@ -444,6 +513,7 @@ async def _run(settings: Settings) -> None:
     supervisor.set_sender(real_sender)
     learning.set_sender(real_sender)
     intelligence.set_sender(real_sender)
+    secretary.set_bot_sender(real_sender)
 
     log.info("starting bot pollers for: %s", ", ".join(apps))
 

@@ -32,6 +32,7 @@ from project0.store import (
     UserFactsWriter,
     UserProfile,
 )
+from project0.telegram_io import BotSender, typing_indicator
 
 log = logging.getLogger(__name__)
 
@@ -239,6 +240,7 @@ class Secretary:
         user_profile: UserProfile | None = None,
         user_facts_reader: UserFactsReader | None = None,
         user_facts_writer: UserFactsWriter | None = None,
+        bot_sender: BotSender | None = None,
     ) -> None:
         self._llm = llm
         self._memory = memory
@@ -248,6 +250,12 @@ class Secretary:
         self._user_profile = user_profile
         self._user_facts_reader = user_facts_reader
         self._user_facts_writer = user_facts_writer
+        self._bot_sender = bot_sender
+
+    def set_bot_sender(self, sender: BotSender) -> None:
+        """Injected after the real Telegram bot applications are built.
+        Enables the typing-indicator wrap on reply paths."""
+        self._bot_sender = sender
 
     async def handle(self, env: Envelope) -> AgentResult | None:
         reason = env.routing_reason
@@ -542,13 +550,27 @@ class Secretary:
             scene = f"当前场景：{env.source}"
         user_msg = f"{scene}\n\n{preface}\n{transcript}"
 
-        text = await self._run_with_tool_loop(
-            env=env,
-            purpose="reply",
-            mode=mode,
-            initial_user_text=user_msg,
-            max_tokens=max_tokens,
-        )
+        if self._bot_sender is not None and chat_id is not None:
+            async with typing_indicator(
+                sender=self._bot_sender,
+                agent="secretary",
+                chat_id=chat_id,
+            ):
+                text = await self._run_with_tool_loop(
+                    env=env,
+                    purpose="reply",
+                    mode=mode,
+                    initial_user_text=user_msg,
+                    max_tokens=max_tokens,
+                )
+        else:
+            text = await self._run_with_tool_loop(
+                env=env,
+                purpose="reply",
+                mode=mode,
+                initial_user_text=user_msg,
+                max_tokens=max_tokens,
+            )
         if text is None:
             return None
 
@@ -580,13 +602,28 @@ class Secretary:
         parts.append("不要编造任何 Manager 没给你的细节。")
         user_msg = "\n".join(parts)
 
-        text = await self._run_with_tool_loop(
-            env=env,
-            purpose="reminder",
-            mode="reminder",
-            initial_user_text=user_msg,
-            max_tokens=self._config.max_tokens_reply,
-        )
+        chat_id = env.telegram_chat_id
+        if self._bot_sender is not None and chat_id is not None:
+            async with typing_indicator(
+                sender=self._bot_sender,
+                agent="secretary",
+                chat_id=chat_id,
+            ):
+                text = await self._run_with_tool_loop(
+                    env=env,
+                    purpose="reminder",
+                    mode="reminder",
+                    initial_user_text=user_msg,
+                    max_tokens=self._config.max_tokens_reply,
+                )
+        else:
+            text = await self._run_with_tool_loop(
+                env=env,
+                purpose="reminder",
+                mode="reminder",
+                initial_user_text=user_msg,
+                max_tokens=self._config.max_tokens_reply,
+            )
         if text is None:
             return None
 
