@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import sqlite3
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -565,6 +566,21 @@ class ChatFocusStore:
         self._conn.execute("DELETE FROM chat_focus")
 
 
+def _exclude_models_clause(
+    exclude_models: Iterable[str] | None,
+) -> tuple[str, tuple[str, ...]]:
+    """Build a safe parameterized ``AND model NOT IN (?, ?, ...)`` fragment.
+
+    Returns ``("", ())`` when the exclude list is None or empty — no
+    clause is appended to the query. Never interpolates raw strings
+    into SQL; all values go through placeholders."""
+    if not exclude_models:
+        return ("", ())
+    models = tuple(exclude_models)
+    placeholders = ",".join("?" for _ in models)
+    return (f" AND model NOT IN ({placeholders})", models)
+
+
 class LLMUsageStore:
     """Append-only operational telemetry for LLM calls.
 
@@ -630,8 +646,17 @@ class LLMUsageStore:
             for r in rows
         ]
 
-    def daily_rollup(self, days: int) -> list[dict[str, Any]]:
-        """Per-day rollup for the last ``days`` days, newest first."""
+    def daily_rollup(
+        self,
+        days: int,
+        exclude_models: Iterable[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Per-day rollup for the last ``days`` days, newest first.
+
+        ``exclude_models`` optionally filters out rows whose ``model`` field
+        matches any of the given values — used by the /usage dashboard to
+        hide local-LLM rows while keeping them in the audit trail."""
+        excl_sql, excl_params = _exclude_models_clause(exclude_models)
         rows = self._conn.execute(
             "SELECT substr(ts, 1, 10)                 AS day, "
             "       SUM(input_tokens)                 AS in_tok, "
@@ -640,10 +665,10 @@ class LLMUsageStore:
             "       SUM(output_tokens)                AS out_tok, "
             "       COUNT(*)                          AS calls "
             "FROM llm_usage "
-            "WHERE ts >= date('now', ?) "
+            f"WHERE ts >= date('now', ?){excl_sql} "
             "GROUP BY day "
             "ORDER BY day DESC",
-            (f"-{int(days)} days",),
+            (f"-{int(days)} days", *excl_params),
         ).fetchall()
         return [
             {
@@ -657,18 +682,27 @@ class LLMUsageStore:
             for r in rows
         ]
 
-    def agent_rollup(self, days: int) -> list[dict[str, Any]]:
-        """Per-(agent, purpose) rollup, ordered by total input tokens desc."""
+    def agent_rollup(
+        self,
+        days: int,
+        exclude_models: Iterable[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Per-(agent, purpose) rollup, ordered by total input tokens desc.
+
+        ``exclude_models`` optionally filters out rows whose ``model`` field
+        matches any of the given values — used by the /usage dashboard to
+        hide local-LLM rows while keeping them in the audit trail."""
+        excl_sql, excl_params = _exclude_models_clause(exclude_models)
         rows = self._conn.execute(
             "SELECT agent, purpose, "
             "       SUM(input_tokens + cache_creation_input_tokens + cache_read_input_tokens) AS in_total, "
             "       SUM(output_tokens) AS out_total, "
             "       COUNT(*)           AS calls "
             "FROM llm_usage "
-            "WHERE ts >= datetime('now', ?) "
+            f"WHERE ts >= datetime('now', ?){excl_sql} "
             "GROUP BY agent, purpose "
             "ORDER BY in_total DESC",
-            (f"-{int(days)} days",),
+            (f"-{int(days)} days", *excl_params),
         ).fetchall()
         return [
             {
@@ -681,16 +715,26 @@ class LLMUsageStore:
             for r in rows
         ]
 
-    def recent(self, limit: int) -> list[dict[str, Any]]:
-        """Last ``limit`` rows, newest first."""
+    def recent(
+        self,
+        limit: int,
+        exclude_models: Iterable[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Last ``limit`` rows, newest first.
+
+        ``exclude_models`` optionally filters out rows whose ``model`` field
+        matches any of the given values — used by the /usage dashboard to
+        hide local-LLM rows while keeping them in the audit trail."""
+        excl_sql, excl_params = _exclude_models_clause(exclude_models)
         rows = self._conn.execute(
             "SELECT id, ts, agent, purpose, model, "
             "       input_tokens, cache_creation_input_tokens, "
             "       cache_read_input_tokens, output_tokens, envelope_id "
             "FROM llm_usage "
+            f"WHERE 1=1{excl_sql} "
             "ORDER BY id DESC "
             "LIMIT ?",
-            (int(limit),),
+            (*excl_params, int(limit)),
         ).fetchall()
         return [
             {

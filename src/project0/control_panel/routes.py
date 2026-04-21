@@ -28,6 +28,11 @@ from project0.store import UserFactsReader, UserFactsWriter
 
 router = APIRouter()
 
+# Models excluded from the /usage dashboard. Local-LLM calls are recorded
+# in llm_usage for audit, but are not a $ cost and would mix noise into the
+# daily chart that's primarily about Anthropic token spend.
+_EXCLUDED_USAGE_MODELS: frozenset[str] = frozenset({"qwen2.5-72b-awq-8k"})
+
 
 def _ctx(request: Request, **extra: object) -> dict[str, object]:
     sup = request.app.state.supervisor
@@ -248,7 +253,7 @@ async def usage(request: Request) -> object:
     templates = request.app.state.templates
     store = request.app.state.store
     usage_store = store.llm_usage()
-    daily = usage_store.daily_rollup(days=30)
+    daily = usage_store.daily_rollup(days=30, exclude_models=_EXCLUDED_USAGE_MODELS)
     chart_rows = [
         {
             "day": r["day"],
@@ -257,8 +262,8 @@ async def usage(request: Request) -> object:
         for r in reversed(daily)
     ]
     chart_svg = render_bar_chart_svg(chart_rows)
-    agent_rows = usage_store.agent_rollup(days=7)
-    recent_rows = usage_store.recent(limit=50)
+    agent_rows = usage_store.agent_rollup(days=7, exclude_models=_EXCLUDED_USAGE_MODELS)
+    recent_rows = usage_store.recent(limit=50, exclude_models=_EXCLUDED_USAGE_MODELS)
     return templates.TemplateResponse(
         request, "usage.html",
         _ctx(
