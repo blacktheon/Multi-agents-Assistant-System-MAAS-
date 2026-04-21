@@ -8,10 +8,16 @@ concern. Responses are always HTML pages or redirects — never JSON.
 from __future__ import annotations
 
 import json
+
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from project0.control_panel.paths import ALLOWED_AGENT_NAMES, persona_path, toml_path
+from project0.control_panel.paths import (
+    list_persona_files,
+    list_toml_files,
+    persona_path,
+    toml_path,
+)
 from project0.control_panel.rendering import (
     render_bar_chart_svg,
     render_score_timeseries_svg,
@@ -143,9 +149,10 @@ async def facts_delete(request: Request, fact_id: int) -> RedirectResponse:
 @router.get("/toml")
 async def toml_list(request: Request) -> object:
     templates = request.app.state.templates
+    names = list_toml_files(project_root=request.app.state.project_root)
     return templates.TemplateResponse(
         request, "toml_list.html",
-        _ctx(request, names=ALLOWED_AGENT_NAMES),
+        _ctx(request, names=names),
     )
 
 
@@ -156,7 +163,9 @@ async def toml_edit_get(request: Request, name: str) -> object:
         path = toml_path(name, project_root=request.app.state.project_root)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
-    content = path.read_text(encoding="utf-8") if path.exists() else ""
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"no such file: {name}")
+    content = path.read_text(encoding="utf-8")
     return templates.TemplateResponse(
         request, "toml_edit.html",
         _ctx(request, name=name, content=content),
@@ -171,6 +180,8 @@ async def toml_edit_post(
         path = toml_path(name, project_root=request.app.state.project_root)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"no such file: {name}")
     atomic_write_text(path, content)
     return RedirectResponse(url=f"/toml/{name}", status_code=303)
 
@@ -178,9 +189,10 @@ async def toml_edit_post(
 @router.get("/personas")
 async def personas_list(request: Request) -> object:
     templates = request.app.state.templates
+    names = list_persona_files(project_root=request.app.state.project_root)
     return templates.TemplateResponse(
         request, "personas_list.html",
-        _ctx(request, names=ALLOWED_AGENT_NAMES),
+        _ctx(request, names=names),
     )
 
 @router.get("/personas/{name}")
@@ -190,11 +202,14 @@ async def personas_edit_get(request: Request, name: str) -> object:
         path = persona_path(name, project_root=request.app.state.project_root)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
-    content = path.read_text(encoding="utf-8") if path.exists() else ""
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"no such file: {name}")
+    content = path.read_text(encoding="utf-8")
     return templates.TemplateResponse(
         request, "personas_edit.html",
         _ctx(request, name=name, content=content),
     )
+
 
 @router.post("/personas/{name}")
 async def personas_edit_post(
@@ -204,6 +219,8 @@ async def personas_edit_post(
         path = persona_path(name, project_root=request.app.state.project_root)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"no such file: {name}")
     atomic_write_text(path, content)
     return RedirectResponse(url=f"/personas/{name}", status_code=303)
 
