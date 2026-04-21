@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterator
 
 import pytest
@@ -10,6 +9,11 @@ import pytest
 
 @pytest.fixture
 def required_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    # Neutralize .env so load_dotenv(override=False) in load_settings can't
+    # leak developer-set values (e.g. a locally-edited SECRETARY_MODE=free)
+    # into test assertions about defaults.
+    monkeypatch.setattr("project0.config.load_dotenv", lambda *a, **kw: False)
+
     # Minimal required env so load_settings does not bail on other vars.
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN_SECRETARY", "x")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN_MANAGER", "x")
