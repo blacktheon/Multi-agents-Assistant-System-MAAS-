@@ -34,8 +34,8 @@ def test_default_secretary_mode_is_work(required_env: None, monkeypatch: pytest.
     monkeypatch.delenv("SECRETARY_MODE", raising=False)
     s = load_settings()
     assert s.secretary_mode == "work"
-    assert s.local_llm_base_url == "http://127.0.0.1:8000/v1"
-    assert s.local_llm_model == "qwen2.5-72b-awq-8k"
+    assert s.local_llm_base_url == "http://127.0.0.1:11434/v1"
+    assert s.local_llm_model == "qwen3.5-122b-abliterated-q4km-8k"
     assert s.local_llm_api_key == "unused"
 
 

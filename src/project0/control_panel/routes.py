@@ -30,8 +30,12 @@ router = APIRouter()
 
 # Models excluded from the /usage dashboard. Local-LLM calls are recorded
 # in llm_usage for audit, but are not a $ cost and would mix noise into the
-# daily chart that's primarily about Anthropic token spend.
-_EXCLUDED_USAGE_MODELS: frozenset[str] = frozenset({"qwen2.5-72b-awq-8k"})
+# daily chart that's primarily about Anthropic token spend. Retired local
+# models stay listed so their historical rows remain filtered.
+_EXCLUDED_USAGE_MODELS: frozenset[str] = frozenset({
+    "qwen2.5-72b-awq-8k",
+    "qwen3.5-122b-abliterated-q4km-8k",
+})
 
 
 def _ctx(request: Request, **extra: object) -> dict[str, object]:

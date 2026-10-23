@@ -24,7 +24,7 @@ The one you can just talk to.
 - Delivers reminders Manager hands off — "主人，还有十五分钟要开会" — in her own warm voice, not a robotic notification
 - Has a cooldown gate so she doesn't over-talk when the group is busy
 - Gets playfully jealous in group chats if she sees you chatting with Manager or Intelligence
-- **Optional local-LLM backend** — flip `SECRETARY_MODE=free` in `.env` to point Secretary at an OpenAI-compatible server (vLLM / TensorRT-LLM) running an abliterated Qwen 2.5 72B on your own hardware. Uses a separate persona file (`secretary_free.md`) and disables the long-term memory tool to keep anything she says from leaking into the other agents' context. Telegram's native "typing…" indicator fills the wait on slow local inference. Flip back to `work` to return to Claude with full memory
+- **Optional local-LLM backend** — flip `SECRETARY_MODE=free` in `.env` to point Secretary at an OpenAI-compatible server (Ollama / vLLM / TensorRT-LLM) running an abliterated model on your own hardware — currently Qwen3.5-122B-A10B (Abliterix, Q4_K_M GGUF) via Ollama. Uses a separate persona file (`secretary_free.md`) and disables the long-term memory tool to keep anything she says from leaking into the other agents' context. Telegram's native "typing…" indicator fills the wait on slow local inference. Flip back to `work` to return to Claude with full memory
 
 ### 顾瑾 · Intelligence
 Your personal tech-news briefer.
