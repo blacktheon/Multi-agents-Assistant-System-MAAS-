@@ -408,3 +408,33 @@ def test_notify_without_sender_is_silent_learning(
     # No set_sender call; _notify must swallow silently.
     asyncio.run(agent._notify(chat_id=77, text="anything"))
     # No exception; nothing further to assert.
+
+
+# --- lenient JSON extraction for the summarizer reply -------------------------
+
+
+def test_extract_json_object_plain() -> None:
+    from project0.agents.learning import _extract_json_object
+
+    raw = '{"title": "T", "summary": "S", "tags": ["a"]}'
+    assert _extract_json_object(raw) == {"title": "T", "summary": "S", "tags": ["a"]}
+
+
+def test_extract_json_object_fenced() -> None:
+    from project0.agents.learning import _extract_json_object
+
+    assert _extract_json_object('```json\n{"title": "T"}\n```') == {"title": "T"}
+
+
+def test_extract_json_object_from_prose() -> None:
+    from project0.agents.learning import _extract_json_object
+
+    raw = '这是结果：{"title": "T", "summary": "S", "tags": ["a"]} 希望有帮助'
+    assert _extract_json_object(raw) == {"title": "T", "summary": "S", "tags": ["a"]}
+
+
+def test_extract_json_object_garbage_raises() -> None:
+    from project0.agents.learning import _extract_json_object
+
+    with pytest.raises(ValueError):
+        _extract_json_object("抱歉，我做不到")

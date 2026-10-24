@@ -43,6 +43,34 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+def _extract_json_object(text: str) -> dict[str, Any]:
+    """Parse the summarizer's JSON reply, tolerating markdown fences and
+    prose around the object (local models tend to add both). Raises
+    ValueError when no JSON object is present."""
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = "\n".join(
+            ln for ln in cleaned.splitlines() if not ln.strip().startswith("```")
+        )
+    try:
+        whole = json.loads(cleaned)
+        if isinstance(whole, dict):
+            return whole
+    except ValueError:
+        pass
+    decoder = json.JSONDecoder()
+    start = cleaned.find("{")
+    while start != -1:
+        try:
+            obj, _end = decoder.raw_decode(cleaned, start)
+            if isinstance(obj, dict):
+                return obj
+        except ValueError:
+            pass
+        start = cleaned.find("{", start + 1)
+    raise ValueError("no JSON object found in summarizer reply")
+
+
 # --- persona -----------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -538,14 +566,7 @@ class LearningAgent:
             purpose="summarize",
         )
 
-        # Parse the JSON response — strip markdown fences if present
-        text = raw.strip()
-        if text.startswith("```"):
-            # Remove opening and closing fences
-            lines = text.splitlines()
-            lines = [ln for ln in lines if not ln.strip().startswith("```")]
-            text = "\n".join(lines)
-        return json.loads(text)
+        return _extract_json_object(raw)
 
     def _index_entry(self, entry: Any) -> None:
         """Update local knowledge_index with an entry from Notion."""
