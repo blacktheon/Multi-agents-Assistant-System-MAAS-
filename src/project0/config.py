@@ -34,6 +34,10 @@ class Settings:
     notion_database_id: str
     anthropic_cache_ttl: Literal["ephemeral", "1h"] = "ephemeral"
     secretary_mode: Literal["work", "free"] = "work"
+    # Shared default provider for all agents, and the Intelligence briefing
+    # summarizer's provider (kept on Anthropic by default: Opus + thinking).
+    llm_backend: Literal["anthropic", "local"] = "anthropic"
+    intelligence_briefing_backend: Literal["anthropic", "local"] = "anthropic"
     local_llm_base_url: str = "http://127.0.0.1:11434/v1"
     local_llm_model: str = "qwen3.5-122b-abliterated-q4km-32k"
     local_llm_api_key: str = "unused"
@@ -98,6 +102,20 @@ def load_settings() -> Settings:
         raise RuntimeError(
             f"SECRETARY_MODE must be 'work' or 'free', got {secretary_mode_raw!r}"
         )
+    llm_backend_raw = os.environ.get("LLM_BACKEND", "anthropic").strip().lower() or "anthropic"
+    if llm_backend_raw not in ("anthropic", "local"):
+        raise RuntimeError(
+            f"LLM_BACKEND must be 'anthropic' or 'local', got {llm_backend_raw!r}"
+        )
+    briefing_backend_raw = (
+        os.environ.get("INTELLIGENCE_BRIEFING_BACKEND", "anthropic").strip().lower()
+        or "anthropic"
+    )
+    if briefing_backend_raw not in ("anthropic", "local"):
+        raise RuntimeError(
+            "INTELLIGENCE_BRIEFING_BACKEND must be 'anthropic' or 'local', "
+            f"got {briefing_backend_raw!r}"
+        )
     local_llm_base_url = (
         os.environ.get("LOCAL_LLM_BASE_URL", "").strip() or "http://127.0.0.1:11434/v1"
     )
@@ -148,6 +166,8 @@ def load_settings() -> Settings:
         notion_database_id=notion_database_id,
         anthropic_cache_ttl=raw_ttl,  # type: ignore[arg-type]
         secretary_mode=secretary_mode_raw,  # type: ignore[arg-type]
+        llm_backend=llm_backend_raw,  # type: ignore[arg-type]
+        intelligence_briefing_backend=briefing_backend_raw,  # type: ignore[arg-type]
         local_llm_base_url=local_llm_base_url,
         local_llm_model=local_llm_model,
         local_llm_api_key=local_llm_api_key,
