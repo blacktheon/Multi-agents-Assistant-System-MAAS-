@@ -50,7 +50,7 @@ def test_work_mode_returns_anthropic_writer_and_secretary_prompts(tmp_path: Path
     provider, persona_path, config_path, wired_writer = _build_secretary_dependencies(
         settings=_settings("work"),
         usage_store=usage,
-        anthropic_provider=anthropic,
+        default_provider=anthropic,
         base_facts_writer=writer,
     )
     assert provider is anthropic
@@ -71,7 +71,7 @@ def test_free_mode_returns_local_provider_and_free_prompts_and_no_writer(tmp_pat
     provider, persona_path, config_path, wired_writer = _build_secretary_dependencies(
         settings=_settings("free"),
         usage_store=usage,
-        anthropic_provider=anthropic,
+        default_provider=anthropic,
         base_facts_writer=writer,
     )
     assert isinstance(provider, LocalProvider)
@@ -80,11 +80,35 @@ def test_free_mode_returns_local_provider_and_free_prompts_and_no_writer(tmp_pat
     assert wired_writer is None
 
 
+def test_work_mode_with_local_default_provider_disables_writer(tmp_path: Path) -> None:
+    # LLM_BACKEND=local + SECRETARY_MODE=work: normal persona on the local
+    # model, but the memory tool stays off — the §6 invariant is about the
+    # unaligned model, not about which persona file is loaded.
+    store = Store(str(tmp_path / "s.db"))
+    store.init_schema()
+    usage = LLMUsageStore(store.conn)
+    local = LocalProvider(
+        base_url="http://127.0.0.1:11434/v1", model="m", api_key="unused", usage_store=usage,
+    )
+    writer = UserFactsWriter("secretary", store.conn)
+
+    provider, persona_path, config_path, wired_writer = _build_secretary_dependencies(
+        settings=_settings("work"),
+        usage_store=usage,
+        default_provider=local,
+        base_facts_writer=writer,
+    )
+    assert provider is local
+    assert persona_path == Path("prompts/secretary.md")
+    assert config_path == Path("prompts/secretary.toml")
+    assert wired_writer is None
+
+
 def test_factory_signature_exposes_base_facts_writer(tmp_path: Path) -> None:
     # Pin the shape so callers can't bypass the invariant by calling without
     # the writer argument (would return garbage silently).
     sig = inspect.signature(_build_secretary_dependencies)
     assert "base_facts_writer" in sig.parameters
-    assert "anthropic_provider" in sig.parameters
+    assert "default_provider" in sig.parameters
     assert "usage_store" in sig.parameters
     assert "settings" in sig.parameters

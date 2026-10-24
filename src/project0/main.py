@@ -168,57 +168,111 @@ async def _run_web(
             await server_task
 
 
-def _build_llm_provider(settings: Settings, usage_store: LLMUsageStore) -> LLMProvider:
-    """Construct the LLM provider based on LLM_PROVIDER env var.
+def _build_local_provider(settings: Settings, usage_store: LLMUsageStore) -> LocalProvider:
+    return LocalProvider(
+        base_url=settings.local_llm_base_url,
+        model=settings.local_llm_model,
+        api_key=settings.local_llm_api_key,
+        usage_store=usage_store,
+    )
 
-    Instantiation does not hit the network; a bad Anthropic key surfaces
-    as an LLMProviderError on the first Secretary call rather than at
-    startup. load_settings already rejected obviously-malformed keys
-    (empty or not starting with 'sk-').
+
+def _build_llm_provider(settings: Settings, usage_store: LLMUsageStore) -> LLMProvider:
+    """Construct the shared default LLM provider.
+
+    LLM_PROVIDER=fake (env) wins, for tests. Otherwise settings.llm_backend
+    selects the LocalProvider (Ollama) or an AnthropicProvider whose model
+    comes from the LLM_MODEL env var. Instantiation does not hit the
+    network; a bad Anthropic key surfaces as an LLMProviderError on the
+    first call rather than at startup. load_settings already rejected
+    obviously-malformed keys (empty or not starting with 'sk-').
     """
     provider_name = os.environ.get("LLM_PROVIDER", "anthropic").strip().lower() or "anthropic"
-    model = os.environ.get("LLM_MODEL", "claude-sonnet-4-6").strip() or "claude-sonnet-4-6"
-
-    if provider_name == "anthropic":
-        return AnthropicProvider(
-            api_key=settings.anthropic_api_key,
-            model=model,
-            usage_store=usage_store,
-            cache_ttl=settings.anthropic_cache_ttl,
-        )
     if provider_name == "fake":
         log.warning("LLM_PROVIDER=fake — using FakeProvider. Not for production.")
         return FakeProvider(responses=["(fake provider response)"] * 10_000)
-    raise RuntimeError(f"unknown LLM_PROVIDER={provider_name!r}")
+    if provider_name != "anthropic":
+        raise RuntimeError(f"unknown LLM_PROVIDER={provider_name!r}")
+
+    if settings.llm_backend == "local":
+        return _build_local_provider(settings, usage_store)
+    model = os.environ.get("LLM_MODEL", "claude-sonnet-4-6").strip() or "claude-sonnet-4-6"
+    return AnthropicProvider(
+        api_key=settings.anthropic_api_key,
+        model=model,
+        usage_store=usage_store,
+        cache_ttl=settings.anthropic_cache_ttl,
+    )
+
+
+def _build_intelligence_providers(
+    *,
+    settings: Settings,
+    usage_store: LLMUsageStore,
+    default_provider: LLMProvider,
+    summarizer_model: str,
+    qa_model: str,
+) -> tuple[LLMProvider, LLMProvider]:
+    """Return (summarizer, qa) providers for Intelligence.
+
+    The briefing summarizer follows settings.intelligence_briefing_backend
+    (Anthropic by default — Opus with extended thinking). The Q&A provider
+    follows settings.llm_backend like every other agent: it reuses the
+    shared LocalProvider when local, else gets its own AnthropicProvider
+    with the qa model.
+    """
+    if settings.intelligence_briefing_backend == "local":
+        summarizer: LLMProvider = _build_local_provider(settings, usage_store)
+    else:
+        summarizer = AnthropicProvider(
+            api_key=settings.anthropic_api_key,
+            model=summarizer_model,
+            usage_store=usage_store,
+            cache_ttl=settings.anthropic_cache_ttl,
+        )
+    if settings.llm_backend == "local":
+        qa: LLMProvider = default_provider
+    else:
+        qa = AnthropicProvider(
+            api_key=settings.anthropic_api_key,
+            model=qa_model,
+            usage_store=usage_store,
+            cache_ttl=settings.anthropic_cache_ttl,
+        )
+    return summarizer, qa
 
 
 def _build_secretary_dependencies(
     *,
     settings: Settings,
     usage_store: LLMUsageStore,
-    anthropic_provider: LLMProvider,
+    default_provider: LLMProvider,
     base_facts_writer: UserFactsWriter,
 ) -> tuple[LLMProvider, Path, Path, UserFactsWriter | None]:
     """Return (provider, persona_path, config_path, facts_writer_or_none).
 
-    `work` mode returns the shared AnthropicProvider, normal prompt files,
-    and the wired writer. `free` mode returns a fresh LocalProvider, the
-    free-mode prompt files, and None for the writer — this is the NSFW
-    isolation invariant from 2026-04-20-secretary-local-llm-design.md §6.
+    `work` mode returns the shared default provider and the normal prompt
+    files; `free` mode returns a LocalProvider and the free-mode prompt
+    files. In both modes a LocalProvider Secretary gets no writer — the
+    NSFW isolation invariant from 2026-04-20-secretary-local-llm-design.md
+    §6 is about the unaligned model, not the persona file.
     """
     if settings.secretary_mode == "work":
+        work_writer: UserFactsWriter | None = base_facts_writer
+        if isinstance(default_provider, LocalProvider):
+            work_writer = None
+            log.info("secretary factory: mode=work on LocalProvider (writer disabled)")
         return (
-            anthropic_provider,
+            default_provider,
             Path("prompts/secretary.md"),
             Path("prompts/secretary.toml"),
-            base_facts_writer,
+            work_writer,
         )
     if settings.secretary_mode == "free":
-        local = LocalProvider(
-            base_url=settings.local_llm_base_url,
-            model=settings.local_llm_model,
-            api_key=settings.local_llm_api_key,
-            usage_store=usage_store,
+        local = (
+            default_provider
+            if isinstance(default_provider, LocalProvider)
+            else _build_local_provider(settings, usage_store)
         )
         writer: UserFactsWriter | None = None
         assert writer is None, (
@@ -279,13 +333,13 @@ async def _run(settings: Settings) -> None:
     ) = _build_secretary_dependencies(
         settings=settings,
         usage_store=usage_store,
-        anthropic_provider=llm,
+        default_provider=llm,
         base_facts_writer=secretary_facts_writer,
     )
     # Belt-and-suspenders invariant check (factory also enforces).
     if isinstance(secretary_llm, LocalProvider):
         assert secretary_writer is None, (
-            "SECRETARY_MODE=free must NOT wire user_facts_writer — "
+            "a LocalProvider Secretary must NOT wire user_facts_writer — "
             "see 2026-04-20-secretary-local-llm-design.md §6"
         )
 
@@ -303,8 +357,8 @@ async def _run(settings: Settings) -> None:
     )
     register_secretary(secretary.handle)
     log.info(
-        "secretary registered (mode=%s model=%s)",
-        settings.secretary_mode, secretary_cfg.model,
+        "secretary registered (mode=%s provider=%s toml_model=%s)",
+        settings.secretary_mode, type(secretary_llm).__name__, secretary_cfg.model,
     )
 
     # Google Calendar client (shared; used by Manager and any future
@@ -342,7 +396,9 @@ async def _run(settings: Settings) -> None:
         user_facts_writer=None,
     )
     register_manager(manager.handle)
-    log.info("manager registered (model=%s)", manager_cfg.model)
+    log.info(
+        "manager registered (provider=%s toml_model=%s)", type(llm).__name__, manager_cfg.model
+    )
 
     # --- 6d: Intelligence agent -------------------------------------------
     from project0.agents.intelligence import (
@@ -376,21 +432,15 @@ async def _run(settings: Settings) -> None:
     reports_dir = Path("data/intelligence/reports")
     reports_dir.mkdir(parents=True, exist_ok=True)
 
-    # Intelligence uses two LLM providers: Opus for the one-shot summarizer,
-    # Sonnet for the agentic Q&A tool-use loop. Both talk to Anthropic
-    # directly and do not go through _build_llm_provider (which is driven
-    # by env vars and returns a single provider).
-    intelligence_llm_summarizer = AnthropicProvider(
-        api_key=settings.anthropic_api_key,
-        model=intelligence_cfg.summarizer_model,
+    # Intelligence uses two LLM providers: the one-shot briefing summarizer
+    # (Anthropic Opus + thinking unless INTELLIGENCE_BRIEFING_BACKEND=local)
+    # and the agentic Q&A loop, which follows LLM_BACKEND like every agent.
+    intelligence_llm_summarizer, intelligence_llm_qa = _build_intelligence_providers(
+        settings=settings,
         usage_store=usage_store,
-        cache_ttl=settings.anthropic_cache_ttl,
-    )
-    intelligence_llm_qa = AnthropicProvider(
-        api_key=settings.anthropic_api_key,
-        model=intelligence_cfg.qa_model,
-        usage_store=usage_store,
-        cache_ttl=settings.anthropic_cache_ttl,
+        default_provider=llm,
+        summarizer_model=intelligence_cfg.summarizer_model,
+        qa_model=intelligence_cfg.qa_model,
     )
 
     intelligence = Intelligence(
@@ -410,8 +460,10 @@ async def _run(settings: Settings) -> None:
     )
     register_intelligence(intelligence.handle)
     log.info(
-        "intelligence registered (summarizer=%s, qa=%s, watchlist=%d)",
+        "intelligence registered (briefing=%s/%s, qa=%s/%s, watchlist=%d)",
+        type(intelligence_llm_summarizer).__name__,
         intelligence_cfg.summarizer_model,
+        type(intelligence_llm_qa).__name__,
         intelligence_cfg.qa_model,
         len(intelligence_watchlist),
     )
@@ -448,7 +500,9 @@ async def _run(settings: Settings) -> None:
         user_facts_reader=learning_facts_reader,
     )
     register_learning(learning.handle)
-    log.info("learning registered (model=%s)", learning_cfg.model)
+    log.info(
+        "learning registered (provider=%s toml_model=%s)", type(llm).__name__, learning_cfg.model
+    )
 
     # --- Supervisor agent (叶霏) ---------------------------------------------
     from project0.agents.supervisor import (
@@ -468,7 +522,10 @@ async def _run(settings: Settings) -> None:
         config=supervisor_cfg,
     )
     register_supervisor(supervisor.handle)
-    log.info("supervisor registered (model=%s)", supervisor_cfg.model)
+    log.info(
+        "supervisor registered (provider=%s toml_model=%s)",
+        type(llm).__name__, supervisor_cfg.model,
+    )
 
     supervisor_pulse_entries = load_pulse_entries(Path("prompts/supervisor.toml"))
     log.info(
