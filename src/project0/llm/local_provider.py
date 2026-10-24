@@ -1,9 +1,12 @@
-"""Local LLM provider: talks to an OpenAI-compatible HTTP endpoint.
+"""Local LLM provider: talks to an OpenAI-compatible HTTP endpoint (Ollama).
 
-Used only by Secretary in `SECRETARY_MODE=free`. Structurally parallel to
-AnthropicProvider — same Protocol, same usage recording, but no prompt
-caching and no tool-use. See docs/superpowers/specs/2026-04-20-secretary-
-local-llm-design.md for the design rationale.
+Structurally parallel to AnthropicProvider — same Protocol, same usage
+recording — but no prompt caching and no extended thinking. Tool use is
+implemented at the prompt level with Qwen3.5's native text protocol
+(see project0.llm.qwen_tools), because Ollama 0.17.x cannot render or
+parse tools for the custom-imported GGUF. Design rationale:
+docs/superpowers/specs/2026-04-20-secretary-local-llm-design.md and
+docs/superpowers/specs/2026-10-24-all-agents-local-llm-design.md.
 """
 
 from __future__ import annotations
@@ -17,6 +20,12 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpe
 from openai.types.chat import ChatCompletion, ChatCompletionMessageParam
 
 from project0.llm.provider import LLMProviderError, Msg, SystemBlocks
+from project0.llm.qwen_tools import (
+    parse_tool_calls,
+    render_assistant_turn,
+    render_tool_results,
+    render_tools_system,
+)
 from project0.llm.tools import AssistantToolUseMsg, ToolResultMsg, ToolSpec, ToolUseResult
 from project0.store import LLMUsageStore
 
@@ -26,8 +35,8 @@ log = logging.getLogger(__name__)
 class LocalProviderError(LLMProviderError):
     """Base class for LocalProvider failures.
 
-    Inherits from LLMProviderError so Secretary's existing provider-error
-    catch path handles local-provider failures the same as Anthropic ones —
+    Inherits from LLMProviderError so the agents' existing provider-error
+    catch paths handle local-provider failures the same as Anthropic ones —
     graceful silent drop, daemon keeps running."""
 
 
@@ -47,8 +56,12 @@ def _flatten_system(system: str | SystemBlocks) -> str:
     return system.stable
 
 
+def _chat_msg(role: str, content: str) -> ChatCompletionMessageParam:
+    return cast(ChatCompletionMessageParam, {"role": role, "content": content})
+
+
 class LocalProvider:
-    """OpenAI-compatible HTTP provider. No tool-use; no prompt caching."""
+    """OpenAI-compatible HTTP provider. Prompt-level tool use; no caching."""
 
     def __init__(
         self,
@@ -72,38 +85,21 @@ class LocalProvider:
             max_retries=0,
         )
 
-    async def complete(
-        self,
-        *,
-        system: str | SystemBlocks,
-        messages: list[Msg],
-        max_tokens: int = 800,
-        thinking_budget_tokens: int | None = None,
-        agent: str,
-        purpose: str,
-        envelope_id: int | None = None,
-    ) -> str:
-        # thinking_budget_tokens is Anthropic-specific; ignored here.
-        system_text = _flatten_system(system)
-        payload_messages: list[ChatCompletionMessageParam] = [
-            cast(ChatCompletionMessageParam, {"role": "system", "content": system_text})
-        ]
-        for m in messages:
-            payload_messages.append(
-                cast(ChatCompletionMessageParam, {"role": m.role, "content": m.content})
-            )
-
+    async def _create(
+        self, payload_messages: list[ChatCompletionMessageParam], max_tokens: int
+    ) -> ChatCompletion:
+        """One chat-completions request with the provider's error mapping:
+        timeouts/connection errors and non-retryable HTTP errors raise
+        immediately; a 5xx is retried once after a short sleep."""
         last_err: Exception | None = None
-        resp: ChatCompletion | None = None
         for attempt in (1, 2):
             try:
-                resp = await self._client.chat.completions.create(
+                return await self._client.chat.completions.create(
                     model=self._model,
                     messages=payload_messages,
                     max_tokens=max_tokens,
                     stream=False,
                 )
-                break
             except APITimeoutError as e:
                 log.error("local llm timeout: %s", e)
                 raise LocalProviderUnavailableError("timeout") from e
@@ -127,12 +123,16 @@ class LocalProvider:
                     continue
                 log.error("local llm HTTP error status=%s: %s", status, body_str)
                 raise LocalProviderUnavailableError(f"http {status}") from e
-        else:
-            # Both attempts failed with retryable errors.
-            raise LocalProviderUnavailableError("persistent 5xx") from last_err
+        raise LocalProviderUnavailableError("persistent 5xx") from last_err
 
-        assert resp is not None  # for mypy; loop guarantees it
-
+    def _record_usage(
+        self,
+        resp: ChatCompletion,
+        *,
+        agent: str,
+        purpose: str,
+        envelope_id: int | None,
+    ) -> None:
         usage = getattr(resp, "usage", None)
         in_tok = int(getattr(usage, "prompt_tokens", 0) or 0) if usage else 0
         out_tok = int(getattr(usage, "completion_tokens", 0) or 0) if usage else 0
@@ -153,10 +153,32 @@ class LocalProvider:
             purpose,
         )
 
+    @staticmethod
+    def _content_of(resp: ChatCompletion) -> tuple[str, str | None]:
         if not resp.choices:
-            return ""
-        content = resp.choices[0].message.content
-        return content if content else ""
+            return "", None
+        choice = resp.choices[0]
+        return (choice.message.content or ""), choice.finish_reason
+
+    async def complete(
+        self,
+        *,
+        system: str | SystemBlocks,
+        messages: list[Msg],
+        max_tokens: int = 800,
+        thinking_budget_tokens: int | None = None,
+        agent: str,
+        purpose: str,
+        envelope_id: int | None = None,
+    ) -> str:
+        # thinking_budget_tokens is Anthropic-specific; ignored here.
+        payload_messages = [_chat_msg("system", _flatten_system(system))]
+        payload_messages.extend(_chat_msg(m.role, m.content) for m in messages)
+
+        resp = await self._create(payload_messages, max_tokens)
+        self._record_usage(resp, agent=agent, purpose=purpose, envelope_id=envelope_id)
+        content, _ = self._content_of(resp)
+        return content
 
     async def complete_with_tools(
         self,
@@ -169,7 +191,38 @@ class LocalProvider:
         purpose: str,
         envelope_id: int | None = None,
     ) -> ToolUseResult:
-        raise NotImplementedError(
-            "LocalProvider does not support tool-use; free mode must run "
-            "without user_facts_writer. See 2026-04-20-secretary-local-llm-design.md §6."
-        )
+        payload_messages = [
+            _chat_msg("system", render_tools_system(tools, _flatten_system(system)))
+        ]
+        # Consecutive tool results collapse into one user turn, as the model's
+        # own chat template does.
+        pending_results: list[ToolResultMsg] = []
+
+        def flush_results() -> None:
+            if pending_results:
+                payload_messages.append(_chat_msg("user", render_tool_results(pending_results)))
+                pending_results.clear()
+
+        for m in messages:
+            if isinstance(m, ToolResultMsg):
+                pending_results.append(m)
+                continue
+            flush_results()
+            if isinstance(m, AssistantToolUseMsg):
+                payload_messages.append(
+                    _chat_msg("assistant", render_assistant_turn(m.text, m.tool_calls))
+                )
+            else:
+                payload_messages.append(_chat_msg(m.role, m.content))
+        flush_results()
+
+        resp = await self._create(payload_messages, max_tokens)
+        self._record_usage(resp, agent=agent, purpose=purpose, envelope_id=envelope_id)
+        content, finish_reason = self._content_of(resp)
+
+        text, calls = parse_tool_calls(content, tools)
+        if calls:
+            return ToolUseResult(
+                kind="tool_use", text=text, tool_calls=calls, stop_reason=finish_reason
+            )
+        return ToolUseResult(kind="text", text=content, tool_calls=[], stop_reason=finish_reason)

@@ -14,7 +14,8 @@ import pytest
 import respx
 
 from project0.llm.local_provider import LocalProvider
-from project0.llm.provider import Msg, SystemBlocks
+from project0.llm.provider import LLMProviderError, Msg, SystemBlocks
+from project0.llm.tools import AssistantToolUseMsg, ToolCall, ToolResultMsg, ToolSpec
 from project0.store import LLMUsageStore, Store
 
 BASE_URL = "http://127.0.0.1:8000/v1"
@@ -275,17 +276,126 @@ async def test_local_provider_empty_content_returns_empty_string(tmp_path: Path)
     assert out == ""
 
 
-@pytest.mark.asyncio
-async def test_local_provider_complete_with_tools_raises_not_implemented(tmp_path: Path) -> None:
-    usage = _make_usage_store(tmp_path)
-    provider = LocalProvider(base_url=BASE_URL, model=MODEL, api_key="k", usage_store=usage)
+# --- tool use via Qwen3.5's native text protocol -----------------------------
 
-    with pytest.raises(NotImplementedError, match="free mode must run"):
+TOOL = ToolSpec(
+    name="calendar_list_events",
+    description="List events.",
+    input_schema={
+        "type": "object",
+        "properties": {"day": {"type": "string"}, "limit": {"type": "integer"}},
+    },
+)
+
+
+def _completion(content: str) -> dict:
+    return {
+        "id": "cmpl-t",
+        "object": "chat.completion",
+        "created": 0,
+        "model": MODEL,
+        "choices": [{
+            "index": 0,
+            "message": {"role": "assistant", "content": content},
+            "finish_reason": "stop",
+        }],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    }
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_complete_with_tools_parses_call_and_sends_no_tools_field(tmp_path: Path) -> None:
+    usage = _make_usage_store(tmp_path)
+    provider = LocalProvider(base_url=BASE_URL, model=MODEL, api_key="unused", usage_store=usage)
+    route = respx.post(f"{BASE_URL}/chat/completions").mock(
+        return_value=httpx.Response(200, json=_completion(
+            "<tool_call>\n<function=calendar_list_events>\n<parameter=day>\n明天\n</parameter>\n"
+            "<parameter=limit>\n5\n</parameter>\n</function>\n</tool_call>"
+        ))
+    )
+
+    result = await provider.complete_with_tools(
+        system=SystemBlocks(stable="You are 林夕.", facts="喜欢茶"),
+        messages=[Msg(role="user", content="明天有什么安排？")],
+        tools=[TOOL],
+        max_tokens=512,
+        agent="manager",
+        purpose="tool_loop",
+        envelope_id=7,
+    )
+
+    body = json.loads(route.calls.last.request.content)
+    assert "tools" not in body
+    assert body["messages"][0]["role"] == "system"
+    assert body["messages"][0]["content"].startswith("# Tools")
+    assert body["messages"][0]["content"].endswith("You are 林夕.\n\n喜欢茶")
+    assert body["messages"][1] == {"role": "user", "content": "明天有什么安排？"}
+    assert result.kind == "tool_use"
+    assert result.text is None
+    assert result.tool_calls == [
+        ToolCall(id="call_1", name="calendar_list_events", input={"day": "明天", "limit": 5})
+    ]
+    assert result.stop_reason == "stop"
+    row = usage._conn.execute(
+        "SELECT agent, purpose, envelope_id, input_tokens FROM llm_usage"
+    ).fetchone()
+    assert tuple(row) == ("manager", "tool_loop", 7, 10)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_complete_with_tools_translates_history(tmp_path: Path) -> None:
+    usage = _make_usage_store(tmp_path)
+    provider = LocalProvider(base_url=BASE_URL, model=MODEL, api_key="unused", usage_store=usage)
+    route = respx.post(f"{BASE_URL}/chat/completions").mock(
+        return_value=httpx.Response(200, json=_completion("明天下午三点有会议。"))
+    )
+    call = ToolCall(id="call_1", name="calendar_list_events", input={"day": "明天"})
+
+    result = await provider.complete_with_tools(
+        system="You are 林夕.",
+        messages=[
+            Msg(role="user", content="明天有什么安排？"),
+            AssistantToolUseMsg(tool_calls=[call], text="我查一下"),
+            ToolResultMsg(tool_use_id="call_1", content='[{"title": "会议"}]', is_error=False),
+            ToolResultMsg(tool_use_id="call_1", content="not found", is_error=True),
+        ],
+        tools=[TOOL],
+        max_tokens=512,
+        agent="manager",
+        purpose="tool_loop",
+    )
+
+    body = json.loads(route.calls.last.request.content)
+    assert len(body["messages"]) == 4
+    assert body["messages"][2]["role"] == "assistant"
+    assert body["messages"][2]["content"].startswith("我查一下\n\n<tool_call>")
+    assert body["messages"][3] == {
+        "role": "user",
+        "content": (
+            '<tool_response>\n[{"title": "会议"}]\n</tool_response>\n'
+            "<tool_response>\n[tool error] not found\n</tool_response>"
+        ),
+    }
+    assert result.kind == "text"
+    assert result.text == "明天下午三点有会议。"
+    assert result.tool_calls == []
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_complete_with_tools_connection_error_is_provider_error(tmp_path: Path) -> None:
+    usage = _make_usage_store(tmp_path)
+    provider = LocalProvider(base_url=BASE_URL, model=MODEL, api_key="unused", usage_store=usage)
+    respx.post(f"{BASE_URL}/chat/completions").mock(side_effect=httpx.ConnectError("refused"))
+
+    with pytest.raises(LLMProviderError):
         await provider.complete_with_tools(
             system="s",
-            messages=[],
-            tools=[],
+            messages=[Msg(role="user", content="hi")],
+            tools=[TOOL],
             max_tokens=50,
-            agent="secretary",
-            purpose="reply",
+            agent="manager",
+            purpose="tool_loop",
         )
