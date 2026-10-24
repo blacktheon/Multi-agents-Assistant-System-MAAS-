@@ -399,3 +399,37 @@ async def test_complete_with_tools_connection_error_is_provider_error(tmp_path: 
             agent="manager",
             purpose="tool_loop",
         )
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_complete_with_tools_truncated_call_raises_not_leaks(tmp_path: Path) -> None:
+    # max_tokens cut the call mid-parameter: raw protocol markup must never
+    # reach the user as a text reply; the loop maps the error to errored=True.
+    usage = _make_usage_store(tmp_path)
+    provider = LocalProvider(base_url=BASE_URL, model=MODEL, api_key="unused", usage_store=usage)
+    truncated = _completion("<tool_call>\n<function=calendar_list_events>\n<parameter=day>\n明")
+    truncated["choices"][0]["finish_reason"] = "length"
+    respx.post(f"{BASE_URL}/chat/completions").mock(return_value=httpx.Response(200, json=truncated))
+
+    with pytest.raises(LLMProviderError):
+        await provider.complete_with_tools(
+            system="s", messages=[Msg(role="user", content="hi")], tools=[TOOL],
+            max_tokens=50, agent="manager", purpose="tool_loop",
+        )
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_complete_with_tools_empty_reply_raises_like_anthropic(tmp_path: Path) -> None:
+    usage = _make_usage_store(tmp_path)
+    provider = LocalProvider(base_url=BASE_URL, model=MODEL, api_key="unused", usage_store=usage)
+    respx.post(f"{BASE_URL}/chat/completions").mock(
+        return_value=httpx.Response(200, json=_completion(""))
+    )
+
+    with pytest.raises(LLMProviderError):
+        await provider.complete_with_tools(
+            system="s", messages=[Msg(role="user", content="hi")], tools=[TOOL],
+            max_tokens=50, agent="manager", purpose="tool_loop",
+        )

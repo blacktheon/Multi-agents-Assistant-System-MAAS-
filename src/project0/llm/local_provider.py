@@ -225,4 +225,14 @@ class LocalProvider:
             return ToolUseResult(
                 kind="tool_use", text=text, tool_calls=calls, stop_reason=finish_reason
             )
+        # Mirror AnthropicProvider's contract: a reply that is neither usable
+        # text nor a complete tool call is a provider error (the tool loop
+        # turns it into errored=True and the agent drops the turn) — never a
+        # text reply that would leak raw protocol markup or an empty message.
+        if "<tool_call>" in content:
+            raise LocalProviderError(
+                f"malformed or truncated tool call in reply (finish_reason={finish_reason})"
+            )
+        if not content.strip():
+            raise LocalProviderError(f"empty reply (finish_reason={finish_reason})")
         return ToolUseResult(kind="text", text=content, tool_calls=[], stop_reason=finish_reason)

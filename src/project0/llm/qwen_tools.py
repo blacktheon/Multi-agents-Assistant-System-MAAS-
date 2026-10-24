@@ -146,7 +146,7 @@ def parse_tool_calls(reply: str, tools: list[ToolSpec]) -> tuple[str | None, lis
     with no well-formed call comes back as plain text."""
     matches = list(_CALL_RE.finditer(reply))
     if not matches:
-        if "<function=" in reply:
+        if "<tool_call>" in reply or "<function=" in reply:
             log.warning("local llm: malformed tool call in reply; treating as text")
         stripped = reply.strip()
         return (stripped or None, [])
