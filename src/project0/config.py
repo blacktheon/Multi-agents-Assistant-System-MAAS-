@@ -39,7 +39,7 @@ class Settings:
     llm_backend: Literal["anthropic", "local"] = "anthropic"
     intelligence_briefing_backend: Literal["anthropic", "local"] = "anthropic"
     local_llm_base_url: str = "http://127.0.0.1:11434/v1"
-    local_llm_model: str = "qwen3.5-122b-abliterated-q4km-32k"
+    local_llm_model: str = "qwen3.5-122b-abliterated-q4km"
     local_llm_api_key: str = "unused"
 
 
@@ -120,7 +120,7 @@ def load_settings() -> Settings:
         os.environ.get("LOCAL_LLM_BASE_URL", "").strip() or "http://127.0.0.1:11434/v1"
     )
     local_llm_model = (
-        os.environ.get("LOCAL_LLM_MODEL", "").strip() or "qwen3.5-122b-abliterated-q4km-32k"
+        os.environ.get("LOCAL_LLM_MODEL", "").strip() or "qwen3.5-122b-abliterated-q4km"
     )
     local_llm_api_key = os.environ.get("LOCAL_LLM_API_KEY", "").strip() or "unused"
 

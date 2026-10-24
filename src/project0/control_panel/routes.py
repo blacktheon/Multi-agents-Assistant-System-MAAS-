@@ -36,6 +36,7 @@ _EXCLUDED_USAGE_MODELS: frozenset[str] = frozenset({
     "qwen2.5-72b-awq-8k",
     "qwen3.5-122b-abliterated-q4km-8k",
     "qwen3.5-122b-abliterated-q4km-32k",
+    "qwen3.5-122b-abliterated-q4km",
 })
 
 
