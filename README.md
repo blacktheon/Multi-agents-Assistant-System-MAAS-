@@ -25,6 +25,7 @@ The one you can just talk to.
 - Has a cooldown gate so she doesn't over-talk when the group is busy
 - Gets playfully jealous in group chats if she sees you chatting with Manager or Intelligence
 - **Optional local-LLM backend** — flip `SECRETARY_MODE=free` in `.env` to point Secretary at an OpenAI-compatible server (Ollama / vLLM / TensorRT-LLM) running an abliterated model on your own hardware — currently Qwen3.5-122B-A10B (Abliterix, Q4_K_M GGUF) via Ollama. Uses a separate persona file (`secretary_free.md`) and disables the long-term memory tool to keep anything she says from leaking into the other agents' context. Telegram's native "typing…" indicator fills the wait on slow local inference. Flip back to `work` to return to Claude with full memory
+- **Whole team on local hardware** — `LLM_BACKEND=local` moves *every* agent (tool use included — Manager's calendar, Learning's Notion, Supervisor's reviews) onto the same local model; the local provider speaks Qwen3.5's native tool-call protocol so no Ollama-side tool parser is needed. The Intelligence daily briefing is the deliberate exception and stays on Claude Opus with extended thinking (`INTELLIGENCE_BRIEFING_BACKEND`, default `anthropic`)
 
 ### 顾瑾 · Intelligence
 Your personal tech-news briefer.
