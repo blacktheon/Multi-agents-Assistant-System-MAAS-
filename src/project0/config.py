@@ -39,10 +39,12 @@ class Settings:
     llm_backend: Literal["anthropic", "local"] = "anthropic"
     intelligence_briefing_backend: Literal["anthropic", "local"] = "anthropic"
     local_llm_base_url: str = "http://127.0.0.1:11434/v1"
-    local_llm_model: str = "qwen3.5-122b-abliterated-q4km"
+    local_llm_model: str = "qwen3.5-122b-abliterated-q4km-nothink"
     local_llm_api_key: str = "unused"
-    # Reasoning tokens the local model may spend before each reply, on top
-    # of the caller's max_tokens (the model thinks before every answer).
+    # Agents don't think by default (the -nothink Ollama entry). Flip this
+    # together with LOCAL_LLM_MODEL=…-think to enable reasoning; the budget
+    # is the reasoning headroom then added to every caller's max_tokens.
+    local_llm_thinking: bool = False
     local_llm_thinking_budget: int = 4096
 
 
@@ -123,7 +125,7 @@ def load_settings() -> Settings:
         os.environ.get("LOCAL_LLM_BASE_URL", "").strip() or "http://127.0.0.1:11434/v1"
     )
     local_llm_model = (
-        os.environ.get("LOCAL_LLM_MODEL", "").strip() or "qwen3.5-122b-abliterated-q4km"
+        os.environ.get("LOCAL_LLM_MODEL", "").strip() or "qwen3.5-122b-abliterated-q4km-nothink"
     )
     local_llm_api_key = os.environ.get("LOCAL_LLM_API_KEY", "").strip() or "unused"
     thinking_budget_raw = os.environ.get("LOCAL_LLM_THINKING_BUDGET", "").strip() or "4096"
@@ -135,6 +137,15 @@ def load_settings() -> Settings:
         ) from e
     if local_llm_thinking_budget < 0:
         raise RuntimeError("LOCAL_LLM_THINKING_BUDGET must be >= 0")
+    thinking_raw = os.environ.get("LOCAL_LLM_THINKING", "").strip().lower() or "false"
+    if thinking_raw in ("true", "1", "yes", "on"):
+        local_llm_thinking = True
+    elif thinking_raw in ("false", "0", "no", "off"):
+        local_llm_thinking = False
+    else:
+        raise RuntimeError(
+            f"LOCAL_LLM_THINKING must be true/false, got {thinking_raw!r}"
+        )
 
     store_path = os.environ.get("STORE_PATH", "").strip() or "data/store.db"
     log_level = os.environ.get("LOG_LEVEL", "").strip() or "INFO"
@@ -183,5 +194,6 @@ def load_settings() -> Settings:
         local_llm_base_url=local_llm_base_url,
         local_llm_model=local_llm_model,
         local_llm_api_key=local_llm_api_key,
+        local_llm_thinking=local_llm_thinking,
         local_llm_thinking_budget=local_llm_thinking_budget,
     )

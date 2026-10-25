@@ -72,16 +72,16 @@ class LocalProvider:
         usage_store: LLMUsageStore,
         request_timeout_seconds: float = 180.0,
         retry_sleep_seconds: float = 2.0,
-        thinking_allowance_tokens: int = 4096,
+        thinking_allowance_tokens: int = 0,
     ) -> None:
         if not api_key:
             raise ValueError("LocalProvider requires a non-empty api_key (any string)")
         self._model = model
         self._usage_store = usage_store
         self._retry_sleep = retry_sleep_seconds
-        # The model thinks before every reply and Ollama counts those tokens
-        # against max_tokens, so each caller's visible-reply budget gets this
-        # much headroom for reasoning.
+        # When the served model thinks before replying, Ollama counts those
+        # tokens against max_tokens; this is the reasoning headroom added to
+        # each caller's visible-reply budget (0 for a non-thinking model).
         self._thinking_allowance = thinking_allowance_tokens
         self._client = AsyncOpenAI(
             base_url=base_url,

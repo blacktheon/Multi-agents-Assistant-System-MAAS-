@@ -101,3 +101,25 @@ def test_thinking_budget_invalid_raises(required_env: None, monkeypatch: pytest.
     monkeypatch.setenv("LOCAL_LLM_THINKING_BUDGET", "lots")
     with pytest.raises(RuntimeError, match="LOCAL_LLM_THINKING_BUDGET"):
         load_settings()
+
+
+def test_local_thinking_default_off(required_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    from project0.config import load_settings
+    monkeypatch.delenv("LOCAL_LLM_THINKING", raising=False)
+    s = load_settings()
+    assert s.local_llm_thinking is False
+    assert s.local_llm_model == "qwen3.5-122b-abliterated-q4km-nothink"
+
+
+def test_local_thinking_truthy_values(required_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    from project0.config import load_settings
+    for raw in ("true", "1", "yes", "On"):
+        monkeypatch.setenv("LOCAL_LLM_THINKING", raw)
+        assert load_settings().local_llm_thinking is True, raw
+
+
+def test_local_thinking_invalid_raises(required_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    from project0.config import load_settings
+    monkeypatch.setenv("LOCAL_LLM_THINKING", "maybe")
+    with pytest.raises(RuntimeError, match="LOCAL_LLM_THINKING"):
+        load_settings()

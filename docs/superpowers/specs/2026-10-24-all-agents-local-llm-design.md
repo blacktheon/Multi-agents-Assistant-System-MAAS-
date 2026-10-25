@@ -148,3 +148,21 @@ User decision: enable Qwen3.5 thinking for MAAS, the chat UI and SillyTavern.
   Known consequence: every Secretary listener evaluation now pays this too.
   Per-purpose control (e.g. `think:false` for the listener) would require
   `LocalProvider` to call Ollama's native `/api/chat`; deferred.
+
+### Revised later the same day — agents default to NO thinking
+
+User decision after seeing the latency. Findings that shaped the fix:
+- Ollama's `/v1` route ignores a `think` field, so a consumer on that route
+  cannot switch modes per request.
+- Ollama defaults `think=on` for any model whose template advertises the
+  thinking capability, so "off unless asked" cannot be expressed in a
+  think-aware template.
+
+Resolution: two Ollama entries built from the same weights and identical
+PARAMETERs — `qwen3.5-122b-abliterated-q4km-think` (think-aware template,
+reasoning on) and `…-nothink` (plain template with the empty think block
+pre-filled; not thinking-capable). Verified they share one loaded runner
+(switching costs ~0.1 s, no reload). MAAS defaults to `-nothink` with
+`LOCAL_LLM_THINKING=false` (no reasoning allowance); the chat UI and
+SillyTavern pick either entry (the mobile page's 💭 toggle sends
+`think:true/false` to the `-think` entry over the native API).

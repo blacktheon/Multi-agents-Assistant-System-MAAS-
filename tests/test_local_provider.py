@@ -123,7 +123,7 @@ async def test_local_provider_joins_system_blocks(tmp_path: Path) -> None:
     assert payload["messages"][0]["content"] == "PERSONA\n\nFACTS"
     assert payload["messages"][1] == {"role": "user", "content": "hi"}
     assert payload["model"] == MODEL
-    assert payload["max_tokens"] == 50 + 4096  # caller budget + default thinking allowance
+    assert payload["max_tokens"] == 50  # no thinking allowance unless configured
     assert payload["stream"] is False
 
 
@@ -447,9 +447,12 @@ def _completion_with_reasoning(content: str, reasoning: str, finish: str = "stop
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_complete_adds_default_thinking_allowance_to_max_tokens(tmp_path: Path) -> None:
+async def test_complete_adds_thinking_allowance_to_max_tokens(tmp_path: Path) -> None:
     usage = _make_usage_store(tmp_path)
-    provider = LocalProvider(base_url=BASE_URL, model=MODEL, api_key="unused", usage_store=usage)
+    provider = LocalProvider(
+        base_url=BASE_URL, model=MODEL, api_key="unused", usage_store=usage,
+        thinking_allowance_tokens=4096,
+    )
     route = respx.post(f"{BASE_URL}/chat/completions").mock(
         return_value=httpx.Response(200, json=_completion_with_reasoning("7", "3 plus 4…"))
     )
