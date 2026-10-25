@@ -82,3 +82,22 @@ def test_invalid_briefing_backend_raises(
     monkeypatch.setenv("INTELLIGENCE_BRIEFING_BACKEND", "x")
     with pytest.raises(RuntimeError, match="INTELLIGENCE_BRIEFING_BACKEND"):
         load_settings()
+
+
+def test_thinking_budget_default(required_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    from project0.config import load_settings
+    monkeypatch.delenv("LOCAL_LLM_THINKING_BUDGET", raising=False)
+    assert load_settings().local_llm_thinking_budget == 4096
+
+
+def test_thinking_budget_override(required_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    from project0.config import load_settings
+    monkeypatch.setenv("LOCAL_LLM_THINKING_BUDGET", "8192")
+    assert load_settings().local_llm_thinking_budget == 8192
+
+
+def test_thinking_budget_invalid_raises(required_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    from project0.config import load_settings
+    monkeypatch.setenv("LOCAL_LLM_THINKING_BUDGET", "lots")
+    with pytest.raises(RuntimeError, match="LOCAL_LLM_THINKING_BUDGET"):
+        load_settings()

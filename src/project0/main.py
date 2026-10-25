@@ -174,6 +174,7 @@ def _build_local_provider(settings: Settings, usage_store: LLMUsageStore) -> Loc
         model=settings.local_llm_model,
         api_key=settings.local_llm_api_key,
         usage_store=usage_store,
+        thinking_allowance_tokens=settings.local_llm_thinking_budget,
     )
 
 

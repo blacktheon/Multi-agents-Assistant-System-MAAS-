@@ -93,10 +93,14 @@ def _render_call(call: ToolCall) -> str:
 
 
 def render_assistant_turn(text: str | None, tool_calls: list[ToolCall]) -> str:
-    out = text or ""
+    """Render a tool-loop assistant turn. Such turns always follow the last
+    real user query, where the model's template emits a think block before
+    the content; the model's own reasoning is not retained, so it is empty
+    (exactly what the template renders when reasoning_content is absent)."""
+    out = "<think>\n\n</think>\n\n" + (text or "")
     for i, call in enumerate(tool_calls):
         if i == 0:
-            out += ("\n\n" if out.strip() else "") + _render_call(call)
+            out += ("\n\n" if (text or "").strip() else "") + _render_call(call)
         else:
             out += "\n" + _render_call(call)
     return out

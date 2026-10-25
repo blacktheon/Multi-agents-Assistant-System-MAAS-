@@ -41,6 +41,9 @@ class Settings:
     local_llm_base_url: str = "http://127.0.0.1:11434/v1"
     local_llm_model: str = "qwen3.5-122b-abliterated-q4km"
     local_llm_api_key: str = "unused"
+    # Reasoning tokens the local model may spend before each reply, on top
+    # of the caller's max_tokens (the model thinks before every answer).
+    local_llm_thinking_budget: int = 4096
 
 
 def _parse_int_csv(name: str, raw: str) -> frozenset[int]:
@@ -123,6 +126,15 @@ def load_settings() -> Settings:
         os.environ.get("LOCAL_LLM_MODEL", "").strip() or "qwen3.5-122b-abliterated-q4km"
     )
     local_llm_api_key = os.environ.get("LOCAL_LLM_API_KEY", "").strip() or "unused"
+    thinking_budget_raw = os.environ.get("LOCAL_LLM_THINKING_BUDGET", "").strip() or "4096"
+    try:
+        local_llm_thinking_budget = int(thinking_budget_raw)
+    except ValueError as e:
+        raise RuntimeError(
+            f"LOCAL_LLM_THINKING_BUDGET must be an integer, got {thinking_budget_raw!r}"
+        ) from e
+    if local_llm_thinking_budget < 0:
+        raise RuntimeError("LOCAL_LLM_THINKING_BUDGET must be >= 0")
 
     store_path = os.environ.get("STORE_PATH", "").strip() or "data/store.db"
     log_level = os.environ.get("LOG_LEVEL", "").strip() or "INFO"
@@ -171,4 +183,5 @@ def load_settings() -> Settings:
         local_llm_base_url=local_llm_base_url,
         local_llm_model=local_llm_model,
         local_llm_api_key=local_llm_api_key,
+        local_llm_thinking_budget=local_llm_thinking_budget,
     )

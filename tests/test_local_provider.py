@@ -123,7 +123,7 @@ async def test_local_provider_joins_system_blocks(tmp_path: Path) -> None:
     assert payload["messages"][0]["content"] == "PERSONA\n\nFACTS"
     assert payload["messages"][1] == {"role": "user", "content": "hi"}
     assert payload["model"] == MODEL
-    assert payload["max_tokens"] == 50
+    assert payload["max_tokens"] == 50 + 4096  # caller budget + default thinking allowance
     assert payload["stream"] is False
 
 
@@ -370,7 +370,7 @@ async def test_complete_with_tools_translates_history(tmp_path: Path) -> None:
     body = json.loads(route.calls.last.request.content)
     assert len(body["messages"]) == 4
     assert body["messages"][2]["role"] == "assistant"
-    assert body["messages"][2]["content"].startswith("我查一下\n\n<tool_call>")
+    assert body["messages"][2]["content"].startswith("<think>\n\n</think>\n\n我查一下\n\n<tool_call>")
     assert body["messages"][3] == {
         "role": "user",
         "content": (
@@ -429,6 +429,91 @@ async def test_complete_with_tools_empty_reply_raises_like_anthropic(tmp_path: P
     )
 
     with pytest.raises(LLMProviderError):
+        await provider.complete_with_tools(
+            system="s", messages=[Msg(role="user", content="hi")], tools=[TOOL],
+            max_tokens=50, agent="manager", purpose="tool_loop",
+        )
+
+
+# --- thinking mode (Ollama separates `reasoning` from `content`) --------------
+
+
+def _completion_with_reasoning(content: str, reasoning: str, finish: str = "stop") -> dict:
+    d = _completion(content)
+    d["choices"][0]["message"]["reasoning"] = reasoning
+    d["choices"][0]["finish_reason"] = finish
+    return d
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_complete_adds_default_thinking_allowance_to_max_tokens(tmp_path: Path) -> None:
+    usage = _make_usage_store(tmp_path)
+    provider = LocalProvider(base_url=BASE_URL, model=MODEL, api_key="unused", usage_store=usage)
+    route = respx.post(f"{BASE_URL}/chat/completions").mock(
+        return_value=httpx.Response(200, json=_completion_with_reasoning("7", "3 plus 4…"))
+    )
+
+    out = await provider.complete(
+        system="s", messages=[Msg(role="user", content="3+4?")], max_tokens=50,
+        agent="manager", purpose="reply",
+    )
+
+    assert out == "7"  # reasoning never leaks into the returned text
+    assert json.loads(route.calls.last.request.content)["max_tokens"] == 50 + 4096
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_complete_with_tools_uses_configured_thinking_allowance(tmp_path: Path) -> None:
+    usage = _make_usage_store(tmp_path)
+    provider = LocalProvider(
+        base_url=BASE_URL, model=MODEL, api_key="unused", usage_store=usage,
+        thinking_allowance_tokens=100,
+    )
+    route = respx.post(f"{BASE_URL}/chat/completions").mock(
+        return_value=httpx.Response(200, json=_completion_with_reasoning("done", "hmm"))
+    )
+
+    result = await provider.complete_with_tools(
+        system="s", messages=[Msg(role="user", content="hi")], tools=[TOOL],
+        max_tokens=50, agent="manager", purpose="tool_loop",
+    )
+
+    assert result.kind == "text" and result.text == "done"
+    assert json.loads(route.calls.last.request.content)["max_tokens"] == 150
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_complete_strips_leaked_think_block(tmp_path: Path) -> None:
+    # Defensive: if the server ever fails to separate reasoning, the closing
+    # tag still marks where the answer starts.
+    usage = _make_usage_store(tmp_path)
+    provider = LocalProvider(base_url=BASE_URL, model=MODEL, api_key="unused", usage_store=usage)
+    respx.post(f"{BASE_URL}/chat/completions").mock(
+        return_value=httpx.Response(200, json=_completion("先想一想…\n</think>\n\n答案是7。"))
+    )
+
+    out = await provider.complete(
+        system="s", messages=[Msg(role="user", content="3+4?")], max_tokens=50,
+        agent="manager", purpose="reply",
+    )
+    assert out == "答案是7。"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_complete_with_tools_thinking_exhausted_budget_raises_with_hint(tmp_path: Path) -> None:
+    usage = _make_usage_store(tmp_path)
+    provider = LocalProvider(base_url=BASE_URL, model=MODEL, api_key="unused", usage_store=usage)
+    respx.post(f"{BASE_URL}/chat/completions").mock(
+        return_value=httpx.Response(
+            200, json=_completion_with_reasoning("", "Thinking Process: 1. …", finish="length")
+        )
+    )
+
+    with pytest.raises(LLMProviderError, match="thinking"):
         await provider.complete_with_tools(
             system="s", messages=[Msg(role="user", content="hi")], tools=[TOOL],
             max_tokens=50, agent="manager", purpose="tool_loop",

@@ -72,12 +72,17 @@ class LocalProvider:
         usage_store: LLMUsageStore,
         request_timeout_seconds: float = 180.0,
         retry_sleep_seconds: float = 2.0,
+        thinking_allowance_tokens: int = 4096,
     ) -> None:
         if not api_key:
             raise ValueError("LocalProvider requires a non-empty api_key (any string)")
         self._model = model
         self._usage_store = usage_store
         self._retry_sleep = retry_sleep_seconds
+        # The model thinks before every reply and Ollama counts those tokens
+        # against max_tokens, so each caller's visible-reply budget gets this
+        # much headroom for reasoning.
+        self._thinking_allowance = thinking_allowance_tokens
         self._client = AsyncOpenAI(
             base_url=base_url,
             api_key=api_key,
@@ -97,7 +102,7 @@ class LocalProvider:
                 return await self._client.chat.completions.create(
                     model=self._model,
                     messages=payload_messages,
-                    max_tokens=max_tokens,
+                    max_tokens=max_tokens + self._thinking_allowance,
                     stream=False,
                 )
             except APITimeoutError as e:
@@ -154,11 +159,20 @@ class LocalProvider:
         )
 
     @staticmethod
-    def _content_of(resp: ChatCompletion) -> tuple[str, str | None]:
+    def _content_of(resp: ChatCompletion) -> tuple[str, str | None, str | None]:
+        """Return (content, reasoning, finish_reason). Ollama delivers the
+        model's thinking in a separate `reasoning` field; should a closing
+        think tag ever leak into content, the answer is what follows it."""
         if not resp.choices:
-            return "", None
+            return "", None, None
         choice = resp.choices[0]
-        return (choice.message.content or ""), choice.finish_reason
+        content = choice.message.content or ""
+        if "</think>" in content:
+            content = content.split("</think>", 1)[1].lstrip("\n")
+        reasoning = getattr(choice.message, "reasoning", None)
+        if reasoning is None and choice.message.model_extra:
+            reasoning = choice.message.model_extra.get("reasoning")
+        return content, (reasoning or None), choice.finish_reason
 
     async def complete(
         self,
@@ -177,7 +191,12 @@ class LocalProvider:
 
         resp = await self._create(payload_messages, max_tokens)
         self._record_usage(resp, agent=agent, purpose=purpose, envelope_id=envelope_id)
-        content, _ = self._content_of(resp)
+        content, reasoning, finish_reason = self._content_of(resp)
+        if not content.strip() and reasoning and finish_reason == "length":
+            log.warning(
+                "local llm: thinking exhausted the token budget (agent=%s purpose=%s)",
+                agent, purpose,
+            )
         return content
 
     async def complete_with_tools(
@@ -218,7 +237,7 @@ class LocalProvider:
 
         resp = await self._create(payload_messages, max_tokens)
         self._record_usage(resp, agent=agent, purpose=purpose, envelope_id=envelope_id)
-        content, finish_reason = self._content_of(resp)
+        content, reasoning, finish_reason = self._content_of(resp)
 
         text, calls = parse_tool_calls(content, tools)
         if calls:
@@ -234,5 +253,10 @@ class LocalProvider:
                 f"malformed or truncated tool call in reply (finish_reason={finish_reason})"
             )
         if not content.strip():
+            if reasoning and finish_reason == "length":
+                raise LocalProviderError(
+                    "thinking exhausted the token budget before any reply "
+                    f"(allowance={self._thinking_allowance}); raise LOCAL_LLM_THINKING_BUDGET"
+                )
             raise LocalProviderError(f"empty reply (finish_reason={finish_reason})")
         return ToolUseResult(kind="text", text=content, tool_calls=[], stop_reason=finish_reason)

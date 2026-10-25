@@ -44,15 +44,20 @@ def test_render_tools_system_without_system_text_ends_at_instructions() -> None:
 
 
 def test_render_assistant_turn_with_and_without_text() -> None:
+    # Tool-loop assistant turns always follow the last real user query, so the
+    # model's template renders them with a (here empty) think block first.
     call = ToolCall(
         id="call_1", name="get_weather", input={"city": "上海", "days": 3, "opts": {"a": 1}}
     )
     assert render_assistant_turn(None, [call]) == (
+        "<think>\n\n</think>\n\n"
         "<tool_call>\n<function=get_weather>\n<parameter=city>\n上海\n</parameter>\n"
         '<parameter=days>\n3\n</parameter>\n<parameter=opts>\n{"a": 1}\n</parameter>\n'
         "</function>\n</tool_call>"
     )
-    assert render_assistant_turn("查一下", [call]).startswith("查一下\n\n<tool_call>")
+    assert render_assistant_turn("查一下", [call]).startswith(
+        "<think>\n\n</think>\n\n查一下\n\n<tool_call>"
+    )
 
 
 def test_render_assistant_turn_multiple_calls_joined_by_newline() -> None:

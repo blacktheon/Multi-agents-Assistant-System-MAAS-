@@ -108,3 +108,9 @@ def test_intelligence_briefing_local_when_asked(usage: LLMUsageStore) -> None:
     summarizer, qa = _intel(s, usage, default)
     assert isinstance(summarizer, LocalProvider)
     assert qa is default
+
+
+def test_local_backend_wires_thinking_allowance(usage: LLMUsageStore) -> None:
+    p = _build_llm_provider(_settings(llm_backend="local", local_llm_thinking_budget=512), usage)
+    assert isinstance(p, LocalProvider)
+    assert p._thinking_allowance == 512
